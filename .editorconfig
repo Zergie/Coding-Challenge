@@ -1,0 +1,21 @@
+root = true
+
+[*.cs]
+indent_style = space
+indent_size = 4
+
+# Keep analyzer findings visible without making style preferences build warnings.
+dotnet_analyzer_diagnostic.severity = warning
+dotnet_analyzer_diagnostic.category-Style.severity = suggestion
+
+csharp_using_directive_placement = outside_namespace:warning
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_style_var_for_built_in_types = true:warning
+csharp_style_var_when_type_is_apparent = true:warning
+csharp_style_var_elsewhere = true:warning
+csharp_style_expression_bodied_methods = when_on_single_line:warning
+csharp_style_expression_bodied_local_functions = when_on_single_line:warning
+csharp_style_expression_bodied_properties = when_on_single_line:warning
+
+# CA1848: Use the LoggerMessage delegates
+dotnet_diagnostic.CA1848.severity = none

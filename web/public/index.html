@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SMT Order Management</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">SMT</span><span>Order Management</span></div>
+    <div class="account"><span id="account-name"></span><button id="sign-out" class="quiet" hidden>Sign out</button></div>
+  </header>
+  <main>
+    <section id="sign-in-view" class="welcome" hidden>
+      <p class="eyebrow">Production planning</p>
+      <h1>Orders, boards, and components in one place.</h1>
+      <p>Sign in with your reviewer account to manage the shared catalog and prepare production handoffs.</p>
+      <button id="sign-in" class="primary">Sign in</button>
+      <p id="sign-in-error" class="error" role="alert"></p>
+    </section>
+    <section id="app-view" hidden>
+      <div class="page-head"><div><p class="eyebrow">Workspace</p><h1 id="page-title">Components</h1><p id="page-subtitle"></p></div><button id="add" class="primary">Add component</button></div>
+      <nav class="tabs" aria-label="Catalog"><button data-tab="components" class="active">Components</button><button data-tab="boards">Boards</button><button data-tab="orders">Orders</button></nav>
+      <div class="toolbar"><label class="search-label" for="search">Search</label><input id="search" type="search" placeholder="Search by name or description"><button id="refresh" class="quiet">Refresh</button></div>
+      <p id="notice" role="status" aria-live="polite"></p>
+      <div class="workspace"><section id="list" class="list" aria-label="Records"></section><section id="detail" class="detail" aria-label="Editor"></section></div>
+    </section>
+    <section id="fatal" class="welcome" hidden><h1>Unable to load the app</h1><p id="fatal-message"></p></section>
+  </main>
+</body>
+</html>

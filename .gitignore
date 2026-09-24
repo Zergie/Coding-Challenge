@@ -1,0 +1,10 @@
+.tools/
+**/bin/
+**/obj/
+.vs/
+*.user
+.env
+.scratch/
+appsettings.Development.json
+web/node_modules/
+web/dist/
