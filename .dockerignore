@@ -1,0 +1,6 @@
+.git
+.scratch
+.tools
+**/bin
+**/obj
+.env

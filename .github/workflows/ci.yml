@@ -1,0 +1,61 @@
+name: Build, test, deploy
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: smt
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: smt_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U smt -d smt_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      SMT_TEST_POSTGRES: Host=localhost;Port=5432;Database=smt_test;Username=smt;Password=test-only-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet restore SmtOrders.sln
+      - run: dotnet build SmtOrders.sln --configuration Release --no-restore
+      - run: dotnet test SmtOrders.sln --configuration Release --no-build
+      - run: dotnet publish src/SmtOrders.Api/SmtOrders.Api.csproj --configuration Release --no-build --output publish
+      - uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        with:
+          name: api
+          path: publish/
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.AZURE_WEBAPP_NAME != ''
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: api
+          path: publish/
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          package: publish/
