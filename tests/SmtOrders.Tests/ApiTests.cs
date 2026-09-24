@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Claims;
+using System.Text.Json;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -155,6 +156,80 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal(2, afterEdit?.ReservedStock);
         Assert.Equal(HttpStatusCode.Conflict, (await _client.DeleteAsync($"/api/boards/{board.Id}")).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await _client.DeleteAsync($"/api/components/{component.Id}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Catalog_validation_search_and_unreferenced_deletion_are_visible_over_http()
+    {
+        Authenticate();
+        var spare = await CreateComponent("SPARE", 5);
+        var component = await CreateComponent("USED", 20);
+        var invalid = await _client.PostAsJsonAsync("/api/boards", new BoardInput("INVALID", "Bad board",
+            "Empty recipe", 80, 50, []));
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        var invalidBody = await invalid.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_input", invalidBody.GetProperty("code").GetString());
+        var board = await CreateBoard(component.Id);
+        var duplicate = await _client.PostAsJsonAsync("/api/components",
+            new ComponentInput("USED", "Duplicate", "Duplicate part", 1));
+        Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+        var components = await _client.GetFromJsonAsync<List<ComponentView>>("/api/components?q=Demo%20part");
+        Assert.Contains(components!, x => x.Id == component.Id);
+        var boards = await _client.GetFromJsonAsync<List<BoardView>>("/api/boards?q=Demo%20board");
+        Assert.Contains(boards!, x => x.Id == board.Id);
+        Assert.Equal(HttpStatusCode.NoContent, (await _client.DeleteAsync($"/api/components/{spare.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await _client.DeleteAsync($"/api/boards/{board.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await _client.DeleteAsync($"/api/components/{component.Id}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Production_handoff_has_required_fields_and_started_order_rejects_edits()
+    {
+        Authenticate();
+        var component = await CreateComponent("C-5", 10);
+        var board = await CreateBoard(component.Id);
+        var input = new OrderInput("Handoff", "Protocol contract", new DateOnly(2026, 9, 24), null,
+            [new OrderLineInput(board.Id, 1, 2)]);
+        var orderResponse = await _client.PostAsJsonAsync("/api/orders", input);
+        var order = (await orderResponse.Content.ReadFromJsonAsync<OrderView>())!;
+        var found = await _client.GetFromJsonAsync<List<OrderView>>("/api/orders?q=Protocol");
+        Assert.Contains(found!, x => x.Id == order.Id);
+        var response = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/vnd.smt-production.v1+json", response.Content.Headers.ContentType?.MediaType);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync());
+        var root = document.RootElement;
+        Assert.Equal("1.0", root.GetProperty("schemaVersion").GetString());
+        Assert.Equal("SMT-LINE-1", root.GetProperty("destination").GetString());
+        Assert.Equal(order.Id.ToString(), root.GetProperty("orderId").GetString());
+        Assert.Equal("2026-09-24", root.GetProperty("orderDate").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("productionStartedAtUtc").GetString()));
+        var line = root.GetProperty("boards")[0];
+        Assert.Equal(board.Id.ToString(), line.GetProperty("boardId").GetString());
+        Assert.Equal(1, line.GetProperty("revision").GetInt32());
+        Assert.Equal(2, line.GetProperty("buildQuantity").GetInt64());
+        Assert.Contains(board.Id.ToString("N"), line.GetProperty("placementProgramId").GetString());
+        Assert.Equal(6, root.GetProperty("materials")[0].GetProperty("totalRequired").GetInt64());
+        Assert.Equal(HttpStatusCode.Conflict,
+            (await _client.PutAsJsonAsync($"/api/orders/{order.Id}", input)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Competing_stock_reduction_and_reservation_keep_inventory_consistent()
+    {
+        Authenticate();
+        var component = await CreateComponent("C-6", 5);
+        var board = await CreateBoard(component.Id);
+        var input = new OrderInput("Race", "Stock edit race", new DateOnly(2026, 9, 24), null,
+            [new OrderLineInput(board.Id, 1, 1)]);
+        var responses = await Task.WhenAll(
+            _client.PostAsJsonAsync("/api/orders", input),
+            _client.PutAsJsonAsync($"/api/components/{component.Id}",
+                new ComponentInput("C-6", "Part", "Demo part", 2)));
+        Assert.Single(responses, x => x.IsSuccessStatusCode);
+        Assert.Single(responses, x => x.StatusCode == HttpStatusCode.Conflict);
+        var stock = await _client.GetFromJsonAsync<ComponentView>($"/api/components/{component.Id}");
+        Assert.True(stock!.PhysicalStock >= stock.ReservedStock);
     }
 
     [Fact]
