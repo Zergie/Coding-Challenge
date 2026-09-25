@@ -174,8 +174,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         var headerRow = await db.Get("S:" + prefix) ?? throw new InvalidOperationException("Started Order has no production snapshot.");
         var header = ReadSnapshotHeader(headerRow);
         var schemaVersion = header.SchemaVersion;
-        if (schemaVersion is not ("1.0" or "2.0" or "3.0"))
-            throw new InvalidOperationException($"Unsupported production snapshot version: {schemaVersion}.");
+        var protocol = ParseProtocol(schemaVersion);
         var boards = new List<SnapshotBoard>();
         foreach (var boardRow in await db.List("SB:" + prefix + ":"))
         {
@@ -201,7 +200,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         var startedAt = header.StartedAtUtc;
         var orderedBoards = boards.OrderBy(x => x.BoardId).ThenBy(x => x.Revision).ToList();
         var allComponents = orderedBoards.SelectMany(x => x.Components).ToList();
-        if (schemaVersion == "1.0")
+        if (protocol == SnapshotProtocol.V1)
         {
             var legacyBoards = orderedBoards.Select(board => new LegacyHandoffBoard(board.BoardId,
                 board.PartNumber, board.Revision, board.LengthMm, board.WidthMm, board.BuildQuantity,
@@ -221,7 +220,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         var currentMaterials = allComponents.GroupBy(x => x.ComponentId)
             .Select(group => new HandoffMaterial(group.Key, group.First().PartNumber, SumRequired(group)))
             .OrderBy(x => x.PartNumber).ThenBy(x => x.ComponentId).ToList();
-        if (schemaVersion == "2.0")
+        if (protocol == SnapshotProtocol.V2)
             return new(new LegacyProductionHandoffV2(schemaVersion, destination, id, orderName, orderDate,
                 dueDate, startedAt, currentBoards, currentMaterials), "application/vnd.smt-production.v2+json");
         return new(new ProductionHandoff(schemaVersion, destination, id, orderName, orderDate,
@@ -237,7 +236,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         if (row.ContainsKey("Json"))
         {
             using var json = JsonDocument.Parse((string)row["Json"]);
-            if (json.RootElement.GetProperty("SchemaVersion").GetString() == "3.0")
+            if (ParseProtocol(json.RootElement.GetProperty("SchemaVersion").GetString()) == SnapshotProtocol.V3)
             {
                 var current = Database.Data<ProductionSnapshotHeaderV3>(row);
                 return new(current.SchemaVersion, current.Destination, current.OrderName,
@@ -253,6 +252,16 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
 
     private static long SumRequired(IEnumerable<SnapshotComponent> components) =>
         components.Aggregate(0L, (total, component) => checked(total + component.TotalRequired));
+
+    private enum SnapshotProtocol { V1, V2, V3 }
+
+    private static SnapshotProtocol ParseProtocol(string? version) => version switch
+    {
+        "1.0" => SnapshotProtocol.V1,
+        "2.0" => SnapshotProtocol.V2,
+        "3.0" => SnapshotProtocol.V3,
+        _ => throw new InvalidOperationException($"Unsupported production snapshot version: {version}.")
+    };
 
     private static OrderRecord MakeOrder(Guid id, OrderInput input, IReadOnlyDictionary<Guid, long> demand) =>
         new(id, input.Name.Trim(), input.Description.Trim(), input.OrderDate,
