@@ -102,15 +102,21 @@ The download media type is `application/vnd.smt-production.v1+json`; `schemaVers
 
 **Cost gate:** The requested region is **West Europe** (`westeurope`). The [retail estimate](docs/azure-cost-estimate.md), checked 2026-09-25, is approximately **$18.91/month** for PostgreSQL B1ms compute and 32 GB storage, or **$4.35 for 168 hours**. This exceeds the soft **$5/month** target. App Service Free has quotas and cold starts. Subscription credits, taxes, and excess backup are not included; verify the subscription's actual billing terms before provisioning. No resource is provisioned by this repository alone.
 
-After that gate, sign in with Azure CLI, select the subscription, create a resource group, and deploy with a secure password parameter from your local environment or secret store:
+After that gate, sign in with Azure CLI, select the subscription, create a resource group, and deploy. Leave the secure password parameter out of the command so Azure CLI prompts for it interactively:
 
-```sh
-az account set --subscription <subscription-id>
-az group create --name <resource-group> --location westeurope
-az deployment group create --resource-group <resource-group> --template-file infra/main.bicep --parameters namePrefix=<unique-prefix> postgresPassword=<secure-value> tenantId=<tenant-guid> apiAudience=<api-client-id> appIdUri=api://<api-client-id> browserClientId=<browser-client-id>
+```powershell
+$subscriptionId = 'YOUR_SUBSCRIPTION_ID'
+$resourceGroup = 'YOUR_RESOURCE_GROUP'
+$namePrefix = 'YOUR_GLOBALLY_UNIQUE_PREFIX'
+$tenantId = 'YOUR_ENTRA_TENANT_ID'
+$apiClientId = 'YOUR_API_CLIENT_ID'
+$browserClientId = 'YOUR_BROWSER_CLIENT_ID'
+az account set --subscription $subscriptionId
+az group create --name $resourceGroup --location westeurope
+az deployment group create --resource-group $resourceGroup --template-file infra/main.bicep --parameters namePrefix=$namePrefix tenantId=$tenantId apiAudience=$apiClientId appIdUri="api://$apiClientId" browserClientId=$browserClientId
 ```
 
-Avoid typing a real password into shell history: use an `az deployment group create` parameters file outside this repository or a secure interactive parameter workflow. The template stores the connection string in App Service settings; no secret belongs in source control. Verify `/health`, anonymous `401`, Entra sign in, and the seeded create-to-download path after deployment. Add `vars.AZURE_WEBAPP_NAME` and GitHub secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`; configure a federated credential for `repo:<owner>/<repo>:ref:refs/heads/main` with a role allowed to deploy the Web App. The workflow deploys only after build and tests pass on `main`. [Azure's App Service deployment guide](https://learn.microsoft.com/en-us/azure/app-service/deploy-github-actions) covers OIDC setup.
+Do not type a real password into shell history or source control. The template stores the connection string in App Service settings. Verify `/health`, anonymous `401`, Entra sign in, and the seeded create-to-download path after deployment. Add `vars.AZURE_WEBAPP_NAME` and GitHub secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`; configure a federated credential for `repo:<owner>/<repo>:ref:refs/heads/main` with a role allowed to deploy the Web App. The workflow deploys only after build and tests pass on `main`. [Azure's App Service deployment guide](https://learn.microsoft.com/en-us/azure/app-service/deploy-github-actions) covers OIDC setup.
 
 For a cloud reset, run `demo/reset.sql` through an administrator connection after the API has applied schema. Review PostgreSQL firewall access for your administrator IP first. Remove the resource group when the review ends to stop billing.
 
