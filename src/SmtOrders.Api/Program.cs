@@ -38,6 +38,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     {
         options.Authority = $"https://login.microsoftonline.com/{tenantId}/v2.0";
         options.Audience = apiAudience;
+        options.MapInboundClaims = false;
         options.Events = new JwtBearerEvents
         {
             OnAuthenticationFailed = context =>
