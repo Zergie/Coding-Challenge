@@ -7,9 +7,11 @@ An ASP.NET Core 8 API for Components, versioned Board recipes, stock reservation
 ```mermaid
 flowchart LR
     Reviewer[Swagger reviewer] -->|Entra token| API[ASP.NET Core API]
-    API --> Catalog[CatalogService]
+    API --> Components[ComponentService]
+    API --> Boards[BoardService]
     API --> Orders[OrderService]
-    Catalog --> Store[Database transaction planner]
+    Components --> Store[Database transaction planner]
+    Boards --> Store
     Orders --> Demand[MaterialDemand]
     Orders --> Store
     Store --> Tables[(Azure Table Storage or Azurite)]
@@ -17,9 +19,9 @@ flowchart LR
     Snapshot --> Tables
 ```
 
-`Program` owns Entra authentication and HTTP routes. `CatalogService` owns Components and Board revisions. `OrderService` owns reservations and the production transition. `MaterialDemand` calculates demand without I/O. `Database` stores entities in one Table partition and commits changes as entity group transactions. Each mutation conditionally replaces one version entity using its ETag. If another API instance writes first, the request re-reads and recalculates before retrying. This protects stock and references across instances.
+`Program` owns Entra authentication and HTTP routes. `ComponentService` owns Component stock and identity; `BoardService` owns Board revisions. `OrderService` owns reservations and the production transition. `MaterialDemand` calculates demand without I/O. `Database` stores entities in one Table partition and commits changes as entity group transactions. Each mutation conditionally replaces one version entity using its ETag. If another API instance writes first, the request re-reads and recalculates before retrying. This protects stock and references across instances.
 
-Components, Boards, revisions, Orders, unique part number indexes, and production snapshots occupy separate RowKey prefixes. Board recipes and Order lines are JSON properties; a production snapshot has structured header, Board, and Component entities. A Table Storage entity group transaction allows at most 100 entity operations in one partition. Order creation and edit check the eventual production batch size, and Board revisions are capped at 97 so deletion remains possible. Larger changes receive `batch_limit` or `revision_limit` before they leave unusable records. The shared partition and catalog scans suit this small reviewer demo; they limit throughput and dataset size.
+Components, Boards, revisions, Orders, unique part number indexes, and production snapshots occupy separate RowKey prefixes. Board recipes and Order lines are JSON properties. New production snapshot headers use the same `Json` property; older headers with separate Table properties remain readable. Board and Component snapshot rows retain their structured properties. A Table Storage entity group transaction allows at most 100 entity operations in one partition. Order creation and edit check the eventual production batch size, and Board revisions are capped at 97 so deletion remains possible. Larger changes receive `batch_limit` or `revision_limit` before they leave unusable records. The shared partition and catalog scans suit this small reviewer demo; they limit throughput and dataset size.
 
 Physical stock counts whole pieces. Available stock is physical stock minus reservations. Board edits append revisions and existing Orders retain their selected revision. An Order may include several revisions of one Board, but each Board and revision pair appears only once. Order create and edit aggregate `build quantity × recipe quantity` and reserve that demand atomically with stock changes. A Reserved Order can be edited or deleted. Its first download marks it Started, consumes physical stock, releases reservations, and saves the snapshot in one transaction. Later downloads read that snapshot, yielding the same JSON bytes. Started Orders cannot be edited or deleted.
 

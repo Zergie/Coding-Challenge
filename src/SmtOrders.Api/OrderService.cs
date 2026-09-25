@@ -77,17 +77,13 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
             Database.Required(destination, "Production destination configuration");
             var started = DateTimeOffset.UtcNow;
             var prefix = Database.Id(id);
-            changes.Add(new TableEntity(Database.Partition, "S:" + prefix)
-            {
-                ["SchemaVersion"] = "2.0", ["Destination"] = destination!.Trim(), ["OrderName"] = order.Name,
-                ["OrderDate"] = order.OrderDate.ToString("yyyy-MM-dd"), ["DueDate"] = order.DueDate?.ToString("yyyy-MM-dd") ?? "",
-                ["StartedAtUtc"] = started
-            });
+            changes.Add(Database.Row("S:" + prefix, new ProductionSnapshotHeader("2.0", destination!.Trim(),
+                order.Name, order.OrderDate, order.DueDate, started)));
             foreach (var line in order.Boards)
             {
                 var boardRow = await db.Get("B:" + Database.Id(line.BoardId)) ?? throw Database.Missing("Board");
                 var board = Database.Data<BoardRecord>(boardRow);
-                var revisionRow = await db.Get(CatalogService.RevisionKey(line.BoardId, line.Revision))
+                var revisionRow = await db.Get(BoardService.RevisionKey(line.BoardId, line.Revision))
                     ?? throw Database.Missing("Board revision");
                 var revision = Database.Data<BoardRevisionRecord>(revisionRow);
                 var boardSuffix = $"{Database.Id(line.BoardId)}:{line.Revision:D10}";
@@ -135,7 +131,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         var recipeLines = 0;
         foreach (var line in lines)
         {
-            var revisionRow = await db.Get(CatalogService.RevisionKey(line.BoardId, line.Revision));
+            var revisionRow = await db.Get(BoardService.RevisionKey(line.BoardId, line.Revision));
             if (revisionRow is null || await db.Get("B:" + Database.Id(line.BoardId)) is null)
                 throw Database.Missing($"Board revision {line.BoardId}/{line.Revision}");
             var revision = Database.Data<BoardRevisionRecord>(revisionRow);
@@ -175,8 +171,9 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
     private async Task<ProductionDownload> LoadSnapshot(Guid id)
     {
         var prefix = Database.Id(id);
-        var header = await db.Get("S:" + prefix) ?? throw new InvalidOperationException("Started Order has no production snapshot.");
-        var schemaVersion = (string)header["SchemaVersion"];
+        var headerRow = await db.Get("S:" + prefix) ?? throw new InvalidOperationException("Started Order has no production snapshot.");
+        var header = ReadSnapshotHeader(headerRow);
+        var schemaVersion = header.SchemaVersion;
         if (schemaVersion is not ("1.0" or "2.0"))
             throw new InvalidOperationException($"Unsupported production snapshot version: {schemaVersion}.");
         var boards = new List<SnapshotBoard>();
@@ -197,12 +194,11 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
                 (long)boardRow["LengthMilliMm"] / 1000m, (long)boardRow["WidthMilliMm"] / 1000m,
                 (long)boardRow["BuildQuantity"], components.OrderBy(x => x.PartNumber).ToList()));
         }
-        var due = (string)header["DueDate"];
-        var destination = (string)header["Destination"];
-        var orderName = (string)header["OrderName"];
-        var orderDate = DateOnly.Parse((string)header["OrderDate"]);
-        DateOnly? dueDate = due == "" ? null : DateOnly.Parse(due);
-        var startedAt = (DateTimeOffset)header["StartedAtUtc"];
+        var destination = header.Destination;
+        var orderName = header.OrderName;
+        var orderDate = header.OrderDate;
+        var dueDate = header.DueDate;
+        var startedAt = header.StartedAtUtc;
         var orderedBoards = boards.OrderBy(x => x.BoardId).ThenBy(x => x.Revision).ToList();
         var allComponents = orderedBoards.SelectMany(x => x.Components).ToList();
         if (schemaVersion == "1.0")
@@ -232,6 +228,15 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
     private sealed record SnapshotComponent(Guid ComponentId, string PartNumber, long QuantityPerBoard, long TotalRequired);
     private sealed record SnapshotBoard(Guid BoardId, string PartNumber, int Revision, decimal LengthMm,
         decimal WidthMm, long BuildQuantity, IReadOnlyList<SnapshotComponent> Components);
+
+    private static ProductionSnapshotHeader ReadSnapshotHeader(TableEntity row)
+    {
+        if (row.ContainsKey("Json")) return Database.Data<ProductionSnapshotHeader>(row);
+        var due = (string)row["DueDate"];
+        return new((string)row["SchemaVersion"], (string)row["Destination"], (string)row["OrderName"],
+            DateOnly.Parse((string)row["OrderDate"]), due == "" ? null : DateOnly.Parse(due),
+            (DateTimeOffset)row["StartedAtUtc"]);
+    }
 
     private static long SumRequired(IEnumerable<SnapshotComponent> components) =>
         components.Aggregate(0L, (total, component) => checked(total + component.TotalRequired));

@@ -32,7 +32,8 @@ builder.Services.AddSingleton(_ => connectionString is not null
         "Storage:ConnectionString or Storage:TableServiceUri is required.")), tableName,
         new DefaultAzureCredential()));
 builder.Services.AddSingleton<Database>();
-builder.Services.AddScoped<CatalogService>();
+builder.Services.AddScoped<ComponentService>();
+builder.Services.AddScoped<BoardService>();
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -50,7 +51,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             }
         };
     });
-builder.Services.AddAuthorization(options => options.AddPolicy("reviewer", policy =>
+builder.Services.AddAuthorization(options => options.AddPolicy("user", policy =>
     policy.RequireAuthenticatedUser().RequireAssertion(context =>
         context.User.FindFirst("scp")?.Value.Split(' ').Contains(scope) == true)));
 builder.Services.AddEndpointsApiExplorer();
@@ -115,36 +116,36 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
-var api = app.MapGroup("/api").RequireAuthorization("reviewer");
+var api = app.MapGroup("/api").RequireAuthorization("user");
 
-api.MapPost("/components", async (ComponentInput input, CatalogService service) =>
+api.MapPost("/components", async (ComponentInput input, ComponentService service) =>
 {
     var result = await service.CreateComponent(input);
     return Results.Created($"/api/components/{result.Id}", result);
 });
-api.MapGet("/components", (string? q, CatalogService service) => service.SearchComponents(q));
-api.MapGet("/components/{id:guid}", async (Guid id, CatalogService service) =>
+api.MapGet("/components", (string? q, ComponentService service) => service.SearchComponents(q));
+api.MapGet("/components/{id:guid}", async (Guid id, ComponentService service) =>
     await service.FindComponent(id) is { } result ? Results.Ok(result) : Results.NotFound(new { code = "not_found", message = "Component was not found." }));
-api.MapPut("/components/{id:guid}", (Guid id, JsonElement update, CatalogService service) =>
+api.MapPut("/components/{id:guid}", (Guid id, JsonElement update, ComponentService service) =>
     service.UpdateComponent(id, update)).Accepts<ComponentInput>("application/json");
-api.MapDelete("/components/{id:guid}", async (Guid id, CatalogService service) =>
+api.MapDelete("/components/{id:guid}", async (Guid id, ComponentService service) =>
 { await service.DeleteComponent(id); return Results.NoContent(); });
 
-api.MapPost("/boards", async (BoardInput input, CatalogService service) =>
+api.MapPost("/boards", async (BoardInput input, BoardService service) =>
 {
     var result = await service.CreateBoard(input);
     return Results.Created($"/api/boards/{result.Id}/revisions/1", result);
 });
-api.MapGet("/boards", (string? q, CatalogService service) => service.SearchBoards(q));
-api.MapGet("/boards/{id:guid}", async (Guid id, CatalogService service) =>
+api.MapGet("/boards", (string? q, BoardService service) => service.SearchBoards(q));
+api.MapGet("/boards/{id:guid}", async (Guid id, BoardService service) =>
     await service.FindBoard(id) is { } result ? Results.Ok(result) : Results.NotFound(new { code = "not_found", message = "Board was not found." }));
-api.MapGet("/boards/{id:guid}/revisions", async (Guid id, CatalogService service) =>
+api.MapGet("/boards/{id:guid}/revisions", async (Guid id, BoardService service) =>
     await service.ListBoardRevisions(id) is { } result ? Results.Ok(result) : Results.NotFound(new { code = "not_found", message = "Board was not found." }));
-api.MapGet("/boards/{id:guid}/revisions/{revision:int}", async (Guid id, int revision, CatalogService service) =>
+api.MapGet("/boards/{id:guid}/revisions/{revision:int}", async (Guid id, int revision, BoardService service) =>
     await service.FindBoard(id, revision) is { } result ? Results.Ok(result) : Results.NotFound(new { code = "not_found", message = "Board revision was not found." }));
-api.MapPut("/boards/{id:guid}", (Guid id, JsonElement update, CatalogService service) =>
+api.MapPut("/boards/{id:guid}", (Guid id, JsonElement update, BoardService service) =>
     service.ReviseBoard(id, update)).Accepts<BoardEdit>("application/json");
-api.MapDelete("/boards/{id:guid}", async (Guid id, CatalogService service) =>
+api.MapDelete("/boards/{id:guid}", async (Guid id, BoardService service) =>
 { await service.DeleteBoard(id); return Results.NoContent(); });
 
 api.MapPost("/orders", async (OrderInput input, OrderService service) =>

@@ -18,3 +18,6 @@ internal sealed record OrderRecord(Guid Id, string Name, string Description, Dat
         Boards.OrderBy(x => x.BoardId).ThenBy(x => x.Revision)
             .Select(x => new OrderLineView(x.BoardId, x.Revision, x.BuildQuantity)).ToList());
 }
+
+internal sealed record ProductionSnapshotHeader(string SchemaVersion, string Destination, string OrderName,
+    DateOnly OrderDate, DateOnly? DueDate, DateTimeOffset StartedAtUtc);

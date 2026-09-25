@@ -418,12 +418,21 @@ public sealed class ApiTests : IAsyncLifetime
         var material = root.GetProperty("materials")[0];
         Assert.Equal(component.Id.ToString(), material.GetProperty("componentId").GetString());
         Assert.Equal(6, material.GetProperty("totalRequired").GetInt64());
+        var table = _app.Services.GetRequiredService<TableClient>();
+        var header = (await table.GetEntityAsync<TableEntity>(Database.Partition, $"S:{order.Id:N}")).Value;
+        Assert.True(header.ContainsKey("Json"));
+        foreach (var oldField in new[] { "SchemaVersion", "Destination", "OrderName", "OrderDate", "DueDate", "StartedAtUtc" })
+            Assert.False(header.ContainsKey(oldField));
+        using var storedHeader = JsonDocument.Parse((string)header["Json"]);
+        Assert.Equal("2.0", storedHeader.RootElement.GetProperty("SchemaVersion").GetString());
         Assert.Equal(HttpStatusCode.Conflict,
             (await _client.PutAsJsonAsync($"/api/orders/{order.Id}", input)).StatusCode);
     }
 
-    [Fact]
-    public async Task Existing_version_one_snapshot_retains_its_original_download_shape()
+    [Theory]
+    [InlineData("1.0")]
+    [InlineData("2.0")]
+    public async Task Existing_column_based_snapshot_headers_remain_downloadable(string schemaVersion)
     {
         Authenticate();
         var component = await CreateComponent("LEGACY-HANDOFF", 10);
@@ -431,26 +440,43 @@ public sealed class ApiTests : IAsyncLifetime
         var orderResponse = await _client.PostAsJsonAsync("/api/orders", new OrderInput("Legacy", "Retry",
             new DateOnly(2026, 9, 24), null, [new(board.Id, 1, 2)]));
         var order = (await orderResponse.Content.ReadFromJsonAsync<OrderView>())!;
-        (await _client.PostAsync($"/api/orders/{order.Id}/download", null)).EnsureSuccessStatusCode();
+        var started = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
+        started.EnsureSuccessStatusCode();
+        var newHandoff = (await started.Content.ReadFromJsonAsync<ProductionHandoff>())!;
 
-        // A pre-upgrade snapshot has the same rows, but its header declares protocol v1.
+        // Simulate a snapshot header written before headers moved into the Json field.
         var table = _app.Services.GetRequiredService<TableClient>();
         var header = (await table.GetEntityAsync<TableEntity>(Database.Partition, $"S:{order.Id:N}")).Value;
-        header["SchemaVersion"] = "1.0";
-        await table.UpdateEntityAsync(header, header.ETag, TableUpdateMode.Replace);
+        var oldHeader = new TableEntity(Database.Partition, header.RowKey)
+        {
+            ["SchemaVersion"] = schemaVersion, ["Destination"] = newHandoff.Destination,
+            ["OrderName"] = newHandoff.OrderName, ["OrderDate"] = newHandoff.OrderDate.ToString("yyyy-MM-dd"),
+            ["DueDate"] = "", ["StartedAtUtc"] = newHandoff.ProductionStartedAtUtc
+        };
+        await table.UpdateEntityAsync(oldHeader, header.ETag, TableUpdateMode.Replace);
 
         var first = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
-        Assert.Equal("application/vnd.smt-production.v1+json", first.Content.Headers.ContentType?.MediaType);
+        Assert.Equal($"application/vnd.smt-production.v{schemaVersion[0]}+json",
+            first.Content.Headers.ContentType?.MediaType);
         var bytes = await first.Content.ReadAsByteArrayAsync();
         using var document = JsonDocument.Parse(bytes);
         var root = document.RootElement;
-        Assert.Equal("1.0", root.GetProperty("schemaVersion").GetString());
+        Assert.Equal(schemaVersion, root.GetProperty("schemaVersion").GetString());
         var line = root.GetProperty("boards")[0];
-        Assert.Equal($"{board.Id:N}/r1", line.GetProperty("placementProgramId").GetString());
         var boardComponent = line.GetProperty("components")[0];
-        Assert.Equal(6, boardComponent.GetProperty("totalRequired").GetInt64());
-        Assert.False(boardComponent.TryGetProperty("componentId", out _));
-        Assert.False(root.GetProperty("materials")[0].TryGetProperty("componentId", out _));
+        if (schemaVersion == "1.0")
+        {
+            Assert.Equal($"{board.Id:N}/r1", line.GetProperty("placementProgramId").GetString());
+            Assert.Equal(6, boardComponent.GetProperty("totalRequired").GetInt64());
+            Assert.False(boardComponent.TryGetProperty("componentId", out _));
+            Assert.False(root.GetProperty("materials")[0].TryGetProperty("componentId", out _));
+        }
+        else
+        {
+            Assert.False(line.TryGetProperty("placementProgramId", out _));
+            Assert.Equal(component.Id.ToString(), boardComponent.GetProperty("componentId").GetString());
+            Assert.False(boardComponent.TryGetProperty("totalRequired", out _));
+        }
 
         var retry = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
         Assert.Equal(bytes, await retry.Content.ReadAsByteArrayAsync());
@@ -508,7 +534,7 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal(2, stock?.AvailableStock);
     }
 
-    private void Authenticate() => _client.DefaultRequestHeaders.Add("X-Test-User", "reviewer");
+    private void Authenticate() => _client.DefaultRequestHeaders.Add("X-Test-User", "user");
 
     private async Task<ComponentView> CreateComponent(string part, long stock)
     {
