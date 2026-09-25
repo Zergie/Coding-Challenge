@@ -25,6 +25,15 @@ public sealed record HandoffMaterial(Guid ComponentId, string PartNumber, long T
 public sealed record ProductionHandoff(string SchemaVersion, string Destination, Guid OrderId, string OrderName,
     DateOnly OrderDate, DateOnly? DueDate, DateTimeOffset ProductionStartedAtUtc,
     IReadOnlyList<HandoffBoard> Boards, IReadOnlyList<HandoffMaterial> Materials);
+public sealed record ProductionDownload(object Body, string ContentType);
+
+public sealed record LegacyHandoffComponent(string PartNumber, long QuantityPerBoard, long TotalRequired);
+public sealed record LegacyHandoffBoard(Guid BoardId, string PartNumber, int Revision, decimal LengthMm,
+    decimal WidthMm, long BuildQuantity, string PlacementProgramId, IReadOnlyList<LegacyHandoffComponent> Components);
+public sealed record LegacyHandoffMaterial(string PartNumber, long TotalRequired);
+public sealed record LegacyProductionHandoff(string SchemaVersion, string Destination, Guid OrderId, string OrderName,
+    DateOnly OrderDate, DateOnly? DueDate, DateTimeOffset ProductionStartedAtUtc,
+    IReadOnlyList<LegacyHandoffBoard> Boards, IReadOnlyList<LegacyHandoffMaterial> Materials);
 
 public sealed class DomainException(int status, string code, string message) : Exception(message)
 {

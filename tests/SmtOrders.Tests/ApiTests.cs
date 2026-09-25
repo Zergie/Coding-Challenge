@@ -297,10 +297,10 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Contains(found!, x => x.Id == order.Id);
         var response = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal("application/vnd.smt-production.v1+json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("application/vnd.smt-production.v2+json", response.Content.Headers.ContentType?.MediaType);
         using var document = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync());
         var root = document.RootElement;
-        Assert.Equal("1.0", root.GetProperty("schemaVersion").GetString());
+        Assert.Equal("2.0", root.GetProperty("schemaVersion").GetString());
         Assert.Equal("SMT-LINE-1", root.GetProperty("destination").GetString());
         Assert.Equal(order.Id.ToString(), root.GetProperty("orderId").GetString());
         Assert.Equal("2026-09-24", root.GetProperty("orderDate").GetString());
@@ -319,6 +319,40 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal(6, material.GetProperty("totalRequired").GetInt64());
         Assert.Equal(HttpStatusCode.Conflict,
             (await _client.PutAsJsonAsync($"/api/orders/{order.Id}", input)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Existing_version_one_snapshot_retains_its_original_download_shape()
+    {
+        Authenticate();
+        var component = await CreateComponent("LEGACY-HANDOFF", 10);
+        var board = await CreateBoard(component.Id);
+        var orderResponse = await _client.PostAsJsonAsync("/api/orders", new OrderInput("Legacy", "Retry",
+            new DateOnly(2026, 9, 24), null, [new(board.Id, 1, 2)]));
+        var order = (await orderResponse.Content.ReadFromJsonAsync<OrderView>())!;
+        (await _client.PostAsync($"/api/orders/{order.Id}/download", null)).EnsureSuccessStatusCode();
+
+        // A pre-upgrade snapshot has the same rows, but its header declares protocol v1.
+        var table = _app.Services.GetRequiredService<TableClient>();
+        var header = (await table.GetEntityAsync<TableEntity>(Database.Partition, $"S:{order.Id:N}")).Value;
+        header["SchemaVersion"] = "1.0";
+        await table.UpdateEntityAsync(header, header.ETag, TableUpdateMode.Replace);
+
+        var first = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
+        Assert.Equal("application/vnd.smt-production.v1+json", first.Content.Headers.ContentType?.MediaType);
+        var bytes = await first.Content.ReadAsByteArrayAsync();
+        using var document = JsonDocument.Parse(bytes);
+        var root = document.RootElement;
+        Assert.Equal("1.0", root.GetProperty("schemaVersion").GetString());
+        var line = root.GetProperty("boards")[0];
+        Assert.Equal($"{board.Id:N}/r1", line.GetProperty("placementProgramId").GetString());
+        var boardComponent = line.GetProperty("components")[0];
+        Assert.Equal(6, boardComponent.GetProperty("totalRequired").GetInt64());
+        Assert.False(boardComponent.TryGetProperty("componentId", out _));
+        Assert.False(root.GetProperty("materials")[0].TryGetProperty("componentId", out _));
+
+        var retry = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
+        Assert.Equal(bytes, await retry.Content.ReadAsByteArrayAsync());
     }
 
     [Fact]

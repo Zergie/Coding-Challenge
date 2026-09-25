@@ -63,7 +63,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         log.LogInformation("Order {OrderId} deleted; reservation released", id);
     }
 
-    public async Task<ProductionHandoff> Download(Guid id)
+    public async Task<ProductionDownload> Download(Guid id)
     {
         var retry = await db.Write(async changes =>
         {
@@ -76,7 +76,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
             var prefix = Database.Id(id);
             changes.Add(new TableEntity(Database.Partition, "S:" + prefix)
             {
-                ["SchemaVersion"] = "1.0", ["Destination"] = destination!.Trim(), ["OrderName"] = order.Name,
+                ["SchemaVersion"] = "2.0", ["Destination"] = destination!.Trim(), ["OrderName"] = order.Name,
                 ["OrderDate"] = order.OrderDate.ToString("yyyy-MM-dd"), ["DueDate"] = order.DueDate?.ToString("yyyy-MM-dd") ?? "",
                 ["StartedAtUtc"] = started
             });
@@ -169,26 +169,25 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         }
     }
 
-    private async Task<ProductionHandoff> LoadSnapshot(Guid id)
+    private async Task<ProductionDownload> LoadSnapshot(Guid id)
     {
         var prefix = Database.Id(id);
         var header = await db.Get("S:" + prefix) ?? throw new InvalidOperationException("Started Order has no production snapshot.");
-        var boards = new List<HandoffBoard>();
-        var materials = new Dictionary<Guid, HandoffMaterial>();
+        var schemaVersion = (string)header["SchemaVersion"];
+        if (schemaVersion is not ("1.0" or "2.0"))
+            throw new InvalidOperationException($"Unsupported production snapshot version: {schemaVersion}.");
+        var boards = new List<SnapshotBoard>();
         foreach (var boardRow in await db.List("SB:" + prefix + ":"))
         {
             var boardSuffix = boardRow.RowKey[("SB:" + prefix + ":").Length..];
             var boardId = Guid.ParseExact(boardSuffix.Split(':')[0], "N");
-            var components = new List<HandoffComponent>();
+            var components = new List<SnapshotComponent>();
             var componentPrefix = $"SC:{prefix}:{boardSuffix}:";
             foreach (var componentRow in await db.List(componentPrefix))
             {
                 var componentId = Guid.ParseExact(componentRow.RowKey[componentPrefix.Length..], "N");
-                var part = (string)componentRow["PartNumber"];
-                var total = (long)componentRow["TotalRequired"];
-                components.Add(new(componentId, part, (long)componentRow["QuantityPerBoard"]));
-                materials[componentId] = new(componentId, part,
-                    checked((materials.GetValueOrDefault(componentId)?.TotalRequired ?? 0) + total));
+                components.Add(new(componentId, (string)componentRow["PartNumber"],
+                    (long)componentRow["QuantityPerBoard"], (long)componentRow["TotalRequired"]));
             }
             var revision = (int)boardRow["Revision"];
             boards.Add(new(boardId, (string)boardRow["PartNumber"], revision,
@@ -196,12 +195,42 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
                 (long)boardRow["BuildQuantity"], components.OrderBy(x => x.PartNumber).ToList()));
         }
         var due = (string)header["DueDate"];
-        return new((string)header["SchemaVersion"], (string)header["Destination"], id,
-            (string)header["OrderName"], DateOnly.Parse((string)header["OrderDate"]),
-            due == "" ? null : DateOnly.Parse(due), (DateTimeOffset)header["StartedAtUtc"],
-            boards.OrderBy(x => x.BoardId).ThenBy(x => x.Revision).ToList(),
-            materials.Values.OrderBy(x => x.PartNumber).ThenBy(x => x.ComponentId).ToList());
+        var destination = (string)header["Destination"];
+        var orderName = (string)header["OrderName"];
+        var orderDate = DateOnly.Parse((string)header["OrderDate"]);
+        DateOnly? dueDate = due == "" ? null : DateOnly.Parse(due);
+        var startedAt = (DateTimeOffset)header["StartedAtUtc"];
+        var orderedBoards = boards.OrderBy(x => x.BoardId).ThenBy(x => x.Revision).ToList();
+        var allComponents = orderedBoards.SelectMany(x => x.Components).ToList();
+        if (schemaVersion == "1.0")
+        {
+            var legacyBoards = orderedBoards.Select(board => new LegacyHandoffBoard(board.BoardId,
+                board.PartNumber, board.Revision, board.LengthMm, board.WidthMm, board.BuildQuantity,
+                $"{board.BoardId:N}/r{board.Revision}", board.Components.Select(component =>
+                    new LegacyHandoffComponent(component.PartNumber, component.QuantityPerBoard,
+                        component.TotalRequired)).ToList())).ToList();
+            var legacyMaterials = allComponents.GroupBy(x => x.PartNumber, StringComparer.Ordinal)
+                .Select(group => new LegacyHandoffMaterial(group.Key,
+                    group.Aggregate(0L, (total, component) => checked(total + component.TotalRequired))))
+                .OrderBy(x => x.PartNumber).ToList();
+            return new(new LegacyProductionHandoff(schemaVersion, destination, id, orderName, orderDate,
+                dueDate, startedAt, legacyBoards, legacyMaterials), "application/vnd.smt-production.v1+json");
+        }
+        var currentBoards = orderedBoards.Select(board => new HandoffBoard(board.BoardId,
+            board.PartNumber, board.Revision, board.LengthMm, board.WidthMm, board.BuildQuantity,
+            board.Components.Select(component => new HandoffComponent(component.ComponentId,
+                component.PartNumber, component.QuantityPerBoard)).ToList())).ToList();
+        var currentMaterials = allComponents.GroupBy(x => x.ComponentId)
+            .Select(group => new HandoffMaterial(group.Key, group.First().PartNumber,
+                group.Aggregate(0L, (total, component) => checked(total + component.TotalRequired))))
+            .OrderBy(x => x.PartNumber).ThenBy(x => x.ComponentId).ToList();
+        return new(new ProductionHandoff(schemaVersion, destination, id, orderName, orderDate,
+            dueDate, startedAt, currentBoards, currentMaterials), "application/vnd.smt-production.v2+json");
     }
+
+    private sealed record SnapshotComponent(Guid ComponentId, string PartNumber, long QuantityPerBoard, long TotalRequired);
+    private sealed record SnapshotBoard(Guid BoardId, string PartNumber, int Revision, decimal LengthMm,
+        decimal WidthMm, long BuildQuantity, IReadOnlyList<SnapshotComponent> Components);
 
     private static OrderRecord MakeOrder(Guid id, OrderInput input, IReadOnlyDictionary<Guid, long> demand) =>
         new(id, input.Name.Trim(), input.Description.Trim(), input.OrderDate, input.DueDate,

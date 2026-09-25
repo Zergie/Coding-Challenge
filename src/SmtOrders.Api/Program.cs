@@ -157,7 +157,8 @@ api.MapDelete("/orders/{id:guid}", async (Guid id, OrderService service) =>
 api.MapPost("/orders/{id:guid}/download", async (Guid id, OrderService service, HttpContext context) =>
 {
     context.Response.Headers.CacheControl = "no-store";
-    return Results.Json(await service.Download(id), contentType: "application/vnd.smt-production.v1+json");
+    var download = await service.Download(id);
+    return Results.Json(download.Body, contentType: download.ContentType);
 });
 
 app.Run();
