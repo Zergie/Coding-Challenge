@@ -7,10 +7,25 @@ using Serilog;
 using SmtOrders.Api;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Host.UseSerilog((context, services, logger) => logger
-    .ReadFrom.Configuration(context.Configuration)
-    .ReadFrom.Services(services)
-    .WriteTo.Console());
+builder.Host.UseSerilog((context, services, logger) =>
+{
+    logger.ReadFrom.Configuration(context.Configuration)
+        .ReadFrom.Services(services)
+        .WriteTo.Console();
+
+    var home = Environment.GetEnvironmentVariable("HOME");
+    if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME"))
+        && !string.IsNullOrWhiteSpace(home))
+    {
+        logger.WriteTo.File(Path.Combine(home, "LogFiles", "Application", "smt-orders-.log"),
+            rollingInterval: RollingInterval.Day,
+            fileSizeLimitBytes: 10 * 1024 * 1024,
+            retainedFileCountLimit: 2,
+            rollOnFileSizeLimit: true,
+            shared: true,
+            flushToDiskInterval: TimeSpan.FromSeconds(1));
+    }
+});
 
 var tableName = builder.Configuration["Storage:TableName"] ?? "SmtOrders";
 var connectionString = builder.Configuration["Storage:ConnectionString"];

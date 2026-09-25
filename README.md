@@ -43,6 +43,8 @@ docker compose up --build -d
 
 Compose runs the Azurite Table service on port 10002 and the API on port 8080. Open `http://localhost:8080/swagger`. `/health` is public; `/api` requires a delegated `access_as_user` token. The API creates its Table and version entity on startup. A fresh installation has no Components, Boards, or Orders.
 
+Local application events stay on the console; view them with `docker compose logs -f api`.
+
 To clear a disposable local Table and start again with no application records, run:
 
 ```sh
@@ -106,9 +108,12 @@ az webapp config appsettings set --name $webApp --resource-group $resourceGroup 
 dotnet publish src/SmtOrders.Api/SmtOrders.Api.csproj --configuration Release --output .scratch/publish
 Compress-Archive -Path .scratch/publish/* -DestinationPath .scratch/api.zip -Force
 az webapp deploy --name $webApp --resource-group $resourceGroup --src-path .scratch/api.zip --type zip
+az webapp log config --name $webApp --resource-group $resourceGroup --application-logging filesystem --level information
 ```
 
 Allow time for role assignment propagation before the app first accesses Table Storage. Open `https://<web-app-name>.azurewebsites.net/swagger`; verify `/health`, anonymous `401` from `/api/components`, Entra sign in, and the create-to-download path. The Table starts with no application records. The GitHub workflow deploys on a passing `main` push when `vars.AZURE_WEBAPP_NAME` is set; configure OIDC secrets and a federated credential before using it. [Azure's App Service deployment guide](https://learn.microsoft.com/en-us/azure/app-service/deploy-github-actions) covers that setup. Remove the resource group when review ends to stop storage charges.
+
+On Azure, Serilog also writes bounded rolling files under `%HOME%\LogFiles\Application`. Use `az webapp log tail --name $webApp --resource-group $resourceGroup --provider application` or the portal Log stream to watch request and application events. Logging includes request method, path, status, and duration, without request bodies or authorization headers.
 
 ## API walkthrough
 
