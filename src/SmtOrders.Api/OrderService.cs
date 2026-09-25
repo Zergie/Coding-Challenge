@@ -39,7 +39,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
             var old = Database.Data<OrderRecord>(row);
             if (old.Status == "Started") throw Started();
             var input = PartialUpdate.Apply(update, new OrderInput(old.Name, old.Description,
-                old.OrderDate, old.DueDate, old.Boards));
+                old.OrderDate, old.Boards));
             Validate(input);
             var (demand, recipeLines) = await Demand(input.Boards);
             CheckDownloadCapacity(input.Boards.Count, recipeLines, demand.Count);
@@ -77,8 +77,8 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
             Database.Required(destination, "Production destination configuration");
             var started = DateTimeOffset.UtcNow;
             var prefix = Database.Id(id);
-            changes.Add(Database.Row("S:" + prefix, new ProductionSnapshotHeader("2.0", destination!.Trim(),
-                order.Name, order.OrderDate, order.DueDate, started)));
+            changes.Add(Database.Row("S:" + prefix, new ProductionSnapshotHeaderV3("3.0", destination!.Trim(),
+                order.Name, order.OrderDate, started)));
             foreach (var line in order.Boards)
             {
                 var boardRow = await db.Get("B:" + Database.Id(line.BoardId)) ?? throw Database.Missing("Board");
@@ -174,7 +174,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         var headerRow = await db.Get("S:" + prefix) ?? throw new InvalidOperationException("Started Order has no production snapshot.");
         var header = ReadSnapshotHeader(headerRow);
         var schemaVersion = header.SchemaVersion;
-        if (schemaVersion is not ("1.0" or "2.0"))
+        if (schemaVersion is not ("1.0" or "2.0" or "3.0"))
             throw new InvalidOperationException($"Unsupported production snapshot version: {schemaVersion}.");
         var boards = new List<SnapshotBoard>();
         foreach (var boardRow in await db.List("SB:" + prefix + ":"))
@@ -221,8 +221,11 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         var currentMaterials = allComponents.GroupBy(x => x.ComponentId)
             .Select(group => new HandoffMaterial(group.Key, group.First().PartNumber, SumRequired(group)))
             .OrderBy(x => x.PartNumber).ThenBy(x => x.ComponentId).ToList();
+        if (schemaVersion == "2.0")
+            return new(new LegacyProductionHandoffV2(schemaVersion, destination, id, orderName, orderDate,
+                dueDate, startedAt, currentBoards, currentMaterials), "application/vnd.smt-production.v2+json");
         return new(new ProductionHandoff(schemaVersion, destination, id, orderName, orderDate,
-            dueDate, startedAt, currentBoards, currentMaterials), "application/vnd.smt-production.v2+json");
+            startedAt, currentBoards, currentMaterials), "application/vnd.smt-production.v3+json");
     }
 
     private sealed record SnapshotComponent(Guid ComponentId, string PartNumber, long QuantityPerBoard, long TotalRequired);
@@ -231,7 +234,17 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
 
     private static ProductionSnapshotHeader ReadSnapshotHeader(TableEntity row)
     {
-        if (row.ContainsKey("Json")) return Database.Data<ProductionSnapshotHeader>(row);
+        if (row.ContainsKey("Json"))
+        {
+            using var json = JsonDocument.Parse((string)row["Json"]);
+            if (json.RootElement.GetProperty("SchemaVersion").GetString() == "3.0")
+            {
+                var current = Database.Data<ProductionSnapshotHeaderV3>(row);
+                return new(current.SchemaVersion, current.Destination, current.OrderName,
+                    current.OrderDate, null, current.StartedAtUtc);
+            }
+            return Database.Data<ProductionSnapshotHeader>(row);
+        }
         var due = (string)row["DueDate"];
         return new((string)row["SchemaVersion"], (string)row["Destination"], (string)row["OrderName"],
             DateOnly.Parse((string)row["OrderDate"]), due == "" ? null : DateOnly.Parse(due),
@@ -242,14 +255,13 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         components.Aggregate(0L, (total, component) => checked(total + component.TotalRequired));
 
     private static OrderRecord MakeOrder(Guid id, OrderInput input, IReadOnlyDictionary<Guid, long> demand) =>
-        new(id, input.Name.Trim(), input.Description.Trim(), input.OrderDate, input.DueDate,
+        new(id, input.Name.Trim(), input.Description.Trim(), input.OrderDate,
             "Reserved", null, input.Boards, demand.ToDictionary(), DateTimeOffset.UtcNow);
 
     private static void Validate(OrderInput input)
     {
         Database.Required(input.Name, "Name"); Database.Required(input.Description, "Description");
         if (input.OrderDate == default) throw new DomainException(400, "invalid_input", "Order date is required.");
-        if (input.DueDate < input.OrderDate) throw new DomainException(400, "invalid_input", "Due date precedes Order date.");
         if (input.Boards is null || input.Boards.Count == 0)
             throw new DomainException(400, "invalid_input", "An Order needs at least one Board.");
         if (input.Boards.Select(x => (x.BoardId, x.Revision)).Distinct().Count() != input.Boards.Count)

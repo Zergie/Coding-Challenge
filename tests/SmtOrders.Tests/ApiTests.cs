@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -73,6 +74,8 @@ public sealed class ApiTests : IAsyncLifetime
             Assert.Equal(inputProperties, updateProperties);
             Assert.False(schema.TryGetProperty("required", out var required) && required.GetArrayLength() > 0);
         }
+        Assert.False(schemas.GetProperty("OrderInput").GetProperty("properties").TryGetProperty("dueDate", out _));
+        Assert.False(schemas.GetProperty("OrderView").GetProperty("properties").TryGetProperty("dueDate", out _));
     }
 
     [Fact]
@@ -86,7 +89,7 @@ public sealed class ApiTests : IAsyncLifetime
         var component = await CreateComponent("CLEAR-1", 10);
         var board = await CreateBoard(component.Id);
         var order = await _client.PostAsJsonAsync("/api/orders", new OrderInput("Clear me", "Reset check",
-            new DateOnly(2026, 9, 25), null, [new(board.Id, 1, 1)]));
+            new DateOnly(2026, 9, 25), [new(board.Id, 1, 1)]));
         Assert.Equal(HttpStatusCode.Created, order.StatusCode);
 
         await _app.Services.GetRequiredService<Database>().Clear();
@@ -115,7 +118,7 @@ public sealed class ApiTests : IAsyncLifetime
         Authenticate();
         var component = await CreateComponent("C-1", 10);
         var board = await CreateBoard(component.Id);
-        var input = new OrderInput("Demo order", "Production demo", new DateOnly(2026, 9, 24), null,
+        var input = new OrderInput("Demo order", "Production demo", new DateOnly(2026, 9, 24),
             [new OrderLineInput(board.Id, 1, 2)]);
         var created = await _client.PostAsJsonAsync("/api/orders", input);
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
@@ -149,7 +152,7 @@ public sealed class ApiTests : IAsyncLifetime
         Authenticate();
         var component = await CreateComponent("C-3", 10);
         var board = await CreateBoard(component.Id);
-        var input = new OrderInput("Protected", "Atomic edits", new DateOnly(2026, 9, 24), null,
+        var input = new OrderInput("Protected", "Atomic edits", new DateOnly(2026, 9, 24),
             [new OrderLineInput(board.Id, 1, 2)]);
         var response = await _client.PostAsJsonAsync("/api/orders", input);
         var order = (await response.Content.ReadFromJsonAsync<OrderView>())!;
@@ -174,7 +177,7 @@ public sealed class ApiTests : IAsyncLifetime
         var component = await CreateComponent("PARTIAL-STOCK", 10);
         var board = await CreateBoard(component.Id);
         var order = await _client.PostAsJsonAsync("/api/orders", new OrderInput("Reserved", "Stock update",
-            new DateOnly(2026, 9, 25), null, [new(board.Id, 1, 2)]));
+            new DateOnly(2026, 9, 25), [new(board.Id, 1, 2)]));
         Assert.Equal(HttpStatusCode.Created, order.StatusCode);
 
         var updatedResponse = await _client.PutAsJsonAsync($"/api/components/{component.Id}",
@@ -218,13 +221,13 @@ public sealed class ApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Order_put_can_update_selected_fields_and_clear_due_date()
+    public async Task Order_put_can_update_selected_fields_without_changing_the_board_plan()
     {
         Authenticate();
         var component = await CreateComponent("PARTIAL-ORDER", 10);
         var board = await CreateBoard(component.Id);
         var created = await _client.PostAsJsonAsync("/api/orders", new OrderInput("Original", "Keep me",
-            new DateOnly(2026, 9, 25), new DateOnly(2026, 9, 30), [new(board.Id, 1, 2)]));
+            new DateOnly(2026, 9, 25), [new(board.Id, 1, 2)]));
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var order = (await created.Content.ReadFromJsonAsync<OrderView>())!;
 
@@ -234,17 +237,53 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal("Renamed", renamed.Name);
         Assert.Equal("Keep me", renamed.Description);
         Assert.Equal(new DateOnly(2026, 9, 25), renamed.OrderDate);
-        Assert.Equal(new DateOnly(2026, 9, 30), renamed.DueDate);
         Assert.Equal(order.Boards, renamed.Boards);
         Assert.Equal(6, (await _client.GetFromJsonAsync<ComponentView>($"/api/components/{component.Id}"))!.ReservedStock);
 
-        var cleared = await _client.PutAsJsonAsync($"/api/orders/{order.Id}", new { dueDate = (DateOnly?)null });
-        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
-        Assert.Null((await cleared.Content.ReadFromJsonAsync<OrderView>())!.DueDate);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.PutAsJsonAsync($"/api/orders/{order.Id}",
+            new { dueDate = (DateOnly?)null })).StatusCode);
         var changedBoards = await _client.PutAsJsonAsync($"/api/orders/{order.Id}",
             new { boards = new[] { new OrderLineInput(board.Id, 1, 1) } });
         Assert.Equal(HttpStatusCode.OK, changedBoards.StatusCode);
         Assert.Equal(3, (await _client.GetFromJsonAsync<ComponentView>($"/api/components/{component.Id}"))!.ReservedStock);
+    }
+
+    [Fact]
+    public async Task New_orders_and_production_downloads_do_not_contain_due_date()
+    {
+        Authenticate();
+        var component = await CreateComponent("NO-DUE-DATE", 10);
+        var board = await CreateBoard(component.Id);
+        var obsoleteInput = await _client.PostAsJsonAsync("/api/orders", new
+        {
+            name = "Old request", description = "Removed field", orderDate = new DateOnly(2026, 9, 25),
+            dueDate = new DateOnly(2026, 9, 30), boards = new[] { new OrderLineInput(board.Id, 1, 1) }
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, obsoleteInput.StatusCode);
+        var created = await _client.PostAsJsonAsync("/api/orders", new
+        {
+            name = "No due date", description = "Removed field", orderDate = new DateOnly(2026, 9, 25),
+            boards = new[] { new OrderLineInput(board.Id, 1, 1) }
+        });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var order = (await created.Content.ReadFromJsonAsync<OrderView>())!;
+        using var createdJson = JsonDocument.Parse(await created.Content.ReadAsByteArrayAsync());
+        Assert.False(createdJson.RootElement.TryGetProperty("dueDate", out _));
+
+        var found = await _client.GetAsync($"/api/orders/{order.Id}");
+        using var foundJson = JsonDocument.Parse(await found.Content.ReadAsByteArrayAsync());
+        Assert.False(foundJson.RootElement.TryGetProperty("dueDate", out _));
+
+        var download = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
+        Assert.Equal("application/vnd.smt-production.v3+json", download.Content.Headers.ContentType?.MediaType);
+        using var handoffJson = JsonDocument.Parse(await download.Content.ReadAsByteArrayAsync());
+        Assert.Equal("3.0", handoffJson.RootElement.GetProperty("schemaVersion").GetString());
+        Assert.False(handoffJson.RootElement.TryGetProperty("dueDate", out _));
+
+        var table = _app.Services.GetRequiredService<TableClient>();
+        var header = (await table.GetEntityAsync<TableEntity>(Database.Partition, $"S:{order.Id:N}")).Value;
+        using var headerJson = JsonDocument.Parse((string)header["Json"]);
+        Assert.False(headerJson.RootElement.TryGetProperty("DueDate", out _));
     }
 
     [Fact]
@@ -253,7 +292,7 @@ public sealed class ApiTests : IAsyncLifetime
         Authenticate();
         var component = await CreateComponent("C-4", 20);
         var board = await CreateBoard(component.Id);
-        var input = new OrderInput("Pinned", "Recipe history", new DateOnly(2026, 9, 24), null,
+        var input = new OrderInput("Pinned", "Recipe history", new DateOnly(2026, 9, 24),
             [new OrderLineInput(board.Id, 1, 2)]);
         var orderResponse = await _client.PostAsJsonAsync("/api/orders", input);
         var order = (await orderResponse.Content.ReadFromJsonAsync<OrderView>())!;
@@ -311,7 +350,7 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, revision.StatusCode);
 
         var input = new OrderInput("Two revisions", "One Board, two recipes", new DateOnly(2026, 9, 25),
-            new DateOnly(2026, 9, 25), [new(board.Id, 2, 4), new(board.Id, 1, 2)]);
+            [new(board.Id, 2, 4), new(board.Id, 1, 2)]);
         var created = await _client.PostAsJsonAsync("/api/orders", input);
 
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
@@ -342,7 +381,7 @@ public sealed class ApiTests : IAsyncLifetime
             new BoardEdit("Board", "Updated recipe", 100, 50, [new RecipeInput(component.Id, 1)]));
         Assert.Equal(HttpStatusCode.OK, revision.StatusCode);
 
-        var input = new OrderInput("Revision edit", "Pair uniqueness", new DateOnly(2026, 9, 25), null,
+        var input = new OrderInput("Revision edit", "Pair uniqueness", new DateOnly(2026, 9, 25),
             [new(board.Id, 1, 1)]);
         var repeated = input with { Boards = [new(board.Id, 1, 1), new(board.Id, 1, 2)] };
         Assert.Equal(HttpStatusCode.BadRequest, (await _client.PostAsJsonAsync("/api/orders", repeated)).StatusCode);
@@ -390,7 +429,7 @@ public sealed class ApiTests : IAsyncLifetime
         Authenticate();
         var component = await CreateComponent("C-5", 10);
         var board = await CreateBoard(component.Id);
-        var input = new OrderInput("Handoff", "Protocol contract", new DateOnly(2026, 9, 24), null,
+        var input = new OrderInput("Handoff", "Protocol contract", new DateOnly(2026, 9, 24),
             [new OrderLineInput(board.Id, 1, 2)]);
         var orderResponse = await _client.PostAsJsonAsync("/api/orders", input);
         var order = (await orderResponse.Content.ReadFromJsonAsync<OrderView>())!;
@@ -398,10 +437,11 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Contains(found!, x => x.Id == order.Id);
         var response = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal("application/vnd.smt-production.v2+json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("application/vnd.smt-production.v3+json", response.Content.Headers.ContentType?.MediaType);
         using var document = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync());
         var root = document.RootElement;
-        Assert.Equal("2.0", root.GetProperty("schemaVersion").GetString());
+        Assert.Equal("3.0", root.GetProperty("schemaVersion").GetString());
+        Assert.False(root.TryGetProperty("dueDate", out _));
         Assert.Equal("SMT-LINE-1", root.GetProperty("destination").GetString());
         Assert.Equal(order.Id.ToString(), root.GetProperty("orderId").GetString());
         Assert.Equal("2026-09-24", root.GetProperty("orderDate").GetString());
@@ -424,7 +464,8 @@ public sealed class ApiTests : IAsyncLifetime
         foreach (var oldField in new[] { "SchemaVersion", "Destination", "OrderName", "OrderDate", "DueDate", "StartedAtUtc" })
             Assert.False(header.ContainsKey(oldField));
         using var storedHeader = JsonDocument.Parse((string)header["Json"]);
-        Assert.Equal("2.0", storedHeader.RootElement.GetProperty("SchemaVersion").GetString());
+        Assert.Equal("3.0", storedHeader.RootElement.GetProperty("SchemaVersion").GetString());
+        Assert.False(storedHeader.RootElement.TryGetProperty("DueDate", out _));
         Assert.Equal(HttpStatusCode.Conflict,
             (await _client.PutAsJsonAsync($"/api/orders/{order.Id}", input)).StatusCode);
     }
@@ -438,7 +479,7 @@ public sealed class ApiTests : IAsyncLifetime
         var component = await CreateComponent("LEGACY-HANDOFF", 10);
         var board = await CreateBoard(component.Id);
         var orderResponse = await _client.PostAsJsonAsync("/api/orders", new OrderInput("Legacy", "Retry",
-            new DateOnly(2026, 9, 24), null, [new(board.Id, 1, 2)]));
+            new DateOnly(2026, 9, 24), [new(board.Id, 1, 2)]));
         var order = (await orderResponse.Content.ReadFromJsonAsync<OrderView>())!;
         var started = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
         started.EnsureSuccessStatusCode();
@@ -451,7 +492,7 @@ public sealed class ApiTests : IAsyncLifetime
         {
             ["SchemaVersion"] = schemaVersion, ["Destination"] = newHandoff.Destination,
             ["OrderName"] = newHandoff.OrderName, ["OrderDate"] = newHandoff.OrderDate.ToString("yyyy-MM-dd"),
-            ["DueDate"] = "", ["StartedAtUtc"] = newHandoff.ProductionStartedAtUtc
+            ["DueDate"] = "2026-09-30", ["StartedAtUtc"] = newHandoff.ProductionStartedAtUtc
         };
         await table.UpdateEntityAsync(oldHeader, header.ETag, TableUpdateMode.Replace);
 
@@ -462,6 +503,7 @@ public sealed class ApiTests : IAsyncLifetime
         using var document = JsonDocument.Parse(bytes);
         var root = document.RootElement;
         Assert.Equal(schemaVersion, root.GetProperty("schemaVersion").GetString());
+        Assert.Equal("2026-09-30", root.GetProperty("dueDate").GetString());
         var line = root.GetProperty("boards")[0];
         var boardComponent = line.GetProperty("components")[0];
         if (schemaVersion == "1.0")
@@ -483,6 +525,63 @@ public sealed class ApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Existing_version_two_json_snapshot_preserves_its_due_date()
+    {
+        Authenticate();
+        var component = await CreateComponent("V2-JSON", 10);
+        var board = await CreateBoard(component.Id);
+        var created = await _client.PostAsJsonAsync("/api/orders", new OrderInput("Older handoff", "V2 header",
+            new DateOnly(2026, 9, 25), [new(board.Id, 1, 1)]));
+        var order = (await created.Content.ReadFromJsonAsync<OrderView>())!;
+        var started = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
+        var current = (await started.Content.ReadFromJsonAsync<ProductionHandoff>())!;
+
+        var table = _app.Services.GetRequiredService<TableClient>();
+        var header = (await table.GetEntityAsync<TableEntity>(Database.Partition, $"S:{order.Id:N}")).Value;
+        header["Json"] = JsonSerializer.Serialize(new
+        {
+            SchemaVersion = "2.0", current.Destination, current.OrderName, current.OrderDate,
+            DueDate = new DateOnly(2026, 9, 30), StartedAtUtc = current.ProductionStartedAtUtc
+        });
+        await table.UpdateEntityAsync(header, header.ETag, TableUpdateMode.Replace);
+
+        var first = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
+        Assert.Equal("application/vnd.smt-production.v2+json", first.Content.Headers.ContentType?.MediaType);
+        var bytes = await first.Content.ReadAsByteArrayAsync();
+        using var json = JsonDocument.Parse(bytes);
+        Assert.Equal("2026-09-30", json.RootElement.GetProperty("dueDate").GetString());
+        Assert.Equal(bytes, await (await _client.PostAsync($"/api/orders/{order.Id}/download", null))
+            .Content.ReadAsByteArrayAsync());
+    }
+
+    [Fact]
+    public async Task Existing_order_record_with_due_date_remains_editable()
+    {
+        Authenticate();
+        var component = await CreateComponent("OLD-ORDER", 10);
+        var board = await CreateBoard(component.Id);
+        var created = await _client.PostAsJsonAsync("/api/orders", new OrderInput("Older order", "Stored field",
+            new DateOnly(2026, 9, 25), [new(board.Id, 1, 1)]));
+        var order = (await created.Content.ReadFromJsonAsync<OrderView>())!;
+
+        var table = _app.Services.GetRequiredService<TableClient>();
+        var row = (await table.GetEntityAsync<TableEntity>(Database.Partition, $"O:{order.Id:N}")).Value;
+        var stored = JsonNode.Parse((string)row["Json"])!.AsObject();
+        stored["DueDate"] = "2026-09-30";
+        row["Json"] = stored.ToJsonString();
+        await table.UpdateEntityAsync(row, row.ETag, TableUpdateMode.Replace);
+
+        var found = await _client.GetAsync($"/api/orders/{order.Id}");
+        Assert.Equal(HttpStatusCode.OK, found.StatusCode);
+        using var foundJson = JsonDocument.Parse(await found.Content.ReadAsByteArrayAsync());
+        Assert.False(foundJson.RootElement.TryGetProperty("dueDate", out _));
+        var updated = await _client.PutAsJsonAsync($"/api/orders/{order.Id}", new { name = "Updated order" });
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        using var updatedJson = JsonDocument.Parse(await updated.Content.ReadAsByteArrayAsync());
+        Assert.False(updatedJson.RootElement.TryGetProperty("dueDate", out _));
+    }
+
+    [Fact]
     public async Task Order_that_cannot_fit_the_production_batch_is_rejected_before_reservation()
     {
         Authenticate();
@@ -493,7 +592,7 @@ public sealed class ApiTests : IAsyncLifetime
         boardResponse.EnsureSuccessStatusCode();
         var board = (await boardResponse.Content.ReadFromJsonAsync<BoardView>())!;
         var response = await _client.PostAsJsonAsync("/api/orders", new OrderInput("Too large", "Must reject early",
-            new DateOnly(2026, 9, 24), null, [new(board.Id, 1, 1)]));
+            new DateOnly(2026, 9, 24), [new(board.Id, 1, 1)]));
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("batch_limit", (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
         foreach (var part in parts)
@@ -506,7 +605,7 @@ public sealed class ApiTests : IAsyncLifetime
         Authenticate();
         var component = await CreateComponent("C-6", 5);
         var board = await CreateBoard(component.Id);
-        var input = new OrderInput("Race", "Stock edit race", new DateOnly(2026, 9, 24), null,
+        var input = new OrderInput("Race", "Stock edit race", new DateOnly(2026, 9, 24),
             [new OrderLineInput(board.Id, 1, 1)]);
         var responses = await Task.WhenAll(
             _client.PostAsJsonAsync("/api/orders", input),
@@ -524,7 +623,7 @@ public sealed class ApiTests : IAsyncLifetime
         Authenticate();
         var component = await CreateComponent("C-2", 5);
         var board = await CreateBoard(component.Id);
-        var input = new OrderInput("Parallel", "Reservation race", new DateOnly(2026, 9, 24), null,
+        var input = new OrderInput("Parallel", "Reservation race", new DateOnly(2026, 9, 24),
             [new OrderLineInput(board.Id, 1, 1)]);
         var results = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => _client.PostAsJsonAsync("/api/orders", input)));
         Assert.Single(results, x => x.StatusCode == HttpStatusCode.Created);

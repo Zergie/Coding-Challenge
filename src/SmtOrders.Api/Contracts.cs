@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace SmtOrders.Api;
 
 public sealed record ComponentInput(string PartNumber, string Name, string Description, long PhysicalStock);
@@ -12,10 +14,11 @@ public sealed record RecipeView(Guid ComponentId, string PartNumber, long Quanti
 public sealed record BoardView(Guid Id, string PartNumber, int Revision, string Name, string Description,
     decimal LengthMm, decimal WidthMm, IReadOnlyList<RecipeView> Recipe);
 public sealed record OrderLineInput(Guid BoardId, int Revision, long BuildQuantity);
-public sealed record OrderInput(string Name, string Description, DateOnly OrderDate, DateOnly? DueDate,
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record OrderInput(string Name, string Description, DateOnly OrderDate,
     IReadOnlyList<OrderLineInput> Boards);
 public sealed record OrderLineView(Guid BoardId, int Revision, long BuildQuantity);
-public sealed record OrderView(Guid Id, string Name, string Description, DateOnly OrderDate, DateOnly? DueDate,
+public sealed record OrderView(Guid Id, string Name, string Description, DateOnly OrderDate,
     string Status, DateTimeOffset? StartedAtUtc, IReadOnlyList<OrderLineView> Boards);
 
 public sealed record HandoffComponent(Guid ComponentId, string PartNumber, long QuantityPerBoard);
@@ -23,9 +26,13 @@ public sealed record HandoffBoard(Guid BoardId, string PartNumber, int Revision,
     decimal WidthMm, long BuildQuantity, IReadOnlyList<HandoffComponent> Components);
 public sealed record HandoffMaterial(Guid ComponentId, string PartNumber, long TotalRequired);
 public sealed record ProductionHandoff(string SchemaVersion, string Destination, Guid OrderId, string OrderName,
-    DateOnly OrderDate, DateOnly? DueDate, DateTimeOffset ProductionStartedAtUtc,
+    DateOnly OrderDate, DateTimeOffset ProductionStartedAtUtc,
     IReadOnlyList<HandoffBoard> Boards, IReadOnlyList<HandoffMaterial> Materials);
 public sealed record ProductionDownload(object Body, string ContentType);
+
+public sealed record LegacyProductionHandoffV2(string SchemaVersion, string Destination, Guid OrderId, string OrderName,
+    DateOnly OrderDate, DateOnly? DueDate, DateTimeOffset ProductionStartedAtUtc,
+    IReadOnlyList<HandoffBoard> Boards, IReadOnlyList<HandoffMaterial> Materials);
 
 public sealed record LegacyHandoffComponent(string PartNumber, long QuantityPerBoard, long TotalRequired);
 public sealed record LegacyHandoffBoard(Guid BoardId, string PartNumber, int Revision, decimal LengthMm,

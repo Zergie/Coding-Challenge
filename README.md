@@ -125,16 +125,16 @@ Example requests:
 ```
 
 ```json
-{"name":"Pilot run","description":"Ten boards","orderDate":"2026-09-24","dueDate":null,"boards":[{"boardId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","revision":1,"buildQuantity":10}]}
+{"name":"Pilot run","description":"Ten boards","orderDate":"2026-09-24","boards":[{"boardId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","revision":1,"buildQuantity":10}]}
 ```
 
 Use real IDs returned by the API for Board and Order requests. Invalid input returns `400`, missing records `404`, and conflicts `409`, each with `{ "code": "...", "message": "..." }`. Stock conflicts report the Component part number, required pieces, available pieces, and shortfall.
 
-`PUT /api/components/{id}`, `PUT /api/boards/{id}`, and `PUT /api/orders/{id}` accept partial JSON objects. Include only fields to change, for example `{"physicalStock":20000}` for a Component or `{"name":"Updated board"}` for a Board. Omitted fields retain their current values; a supplied `boards` or `recipe` array replaces that entire array. Use `{"dueDate":null}` to clear an Order due date. Component stock and Order reservation rules still apply. Every Board PUT creates a new revision, and Started Orders still reject updates.
+`PUT /api/components/{id}`, `PUT /api/boards/{id}`, and `PUT /api/orders/{id}` accept partial JSON objects. Include only fields to change, for example `{"physicalStock":20000}` for a Component or `{"name":"Updated board"}` for a Board. Omitted fields retain their current values; a supplied `boards` or `recipe` array replaces that entire array. Component stock and Order reservation rules still apply. Every Board PUT creates a new revision, and Started Orders still reject updates.
 
 ## Production protocol
 
-New production downloads use media type `application/vnd.smt-production.v2+json` and `schemaVersion` `2.0`. This planning and kitting handoff for `SMT-LINE-1` contains Order dates and UTC start time, ordered Board lines with dimensions and build quantities, per Board Component IDs and quantities per Board, and aggregate materials with Component IDs and total required quantities. The actual placement program is managed outside this API; the JSON contains no placement coordinates. Orders started under protocol v1 keep returning their original `application/vnd.smt-production.v1+json` shape and `schemaVersion` `1.0` on retry, so their download bytes remain stable.
+New production downloads use media type `application/vnd.smt-production.v3+json` and `schemaVersion` `3.0`. This planning and kitting handoff for `SMT-LINE-1` contains the Order date and UTC start time, ordered Board lines with dimensions and build quantities, per Board Component IDs and quantities per Board, and aggregate materials with Component IDs and total required quantities. The actual placement program is managed outside this API; the JSON contains no placement coordinates. Orders started under protocol v1 or v2 keep returning their original media type and fields on retry, including a due date when one was stored, so their download bytes remain stable.
 
 ## Limits
 
