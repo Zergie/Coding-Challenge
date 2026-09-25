@@ -100,13 +100,13 @@ The download media type is `application/vnd.smt-production.v1+json`; `schemaVers
 
 `infra/main.bicep` defines a Windows App Service Free plan, the API, and PostgreSQL Flexible Server with 32 GiB storage and a small Burstable SKU. The database uses public access with the Azure services firewall rule because App Service Free has no private network integration. Keep the demo short lived and use a strong database password. [Azure documents this firewall rule](https://learn.microsoft.com/en-us/azure/postgresql/network/how-to-networking-servers-deployed-public-access-add-firewall-rules) as permitting connections from all Azure services.
 
-**Cost gate:** App Service Free has quotas and cold starts. PostgreSQL Flexible Server still incurs compute, storage, and backup charges and is likely to exceed the soft **$5/month** target. Before provisioning, select the actual subscription and region, calculate the chosen B1ms server with 32 GiB and seven day backup in the [Azure pricing calculator](https://azure.microsoft.com/en-us/pricing/calculator/), record the estimate, and get approval for that cost. A one week demo costs less than a full month but is not free. No resource is provisioned by this repository alone.
+**Cost gate:** The requested region is **West Europe** (`westeurope`). The [retail estimate](docs/azure-cost-estimate.md), checked 2026-09-25, is approximately **$18.91/month** for PostgreSQL B1ms compute and 32 GB storage, or **$4.35 for 168 hours**. This exceeds the soft **$5/month** target. App Service Free has quotas and cold starts. Subscription credits, taxes, and excess backup are not included; verify the subscription's actual billing terms before provisioning. No resource is provisioned by this repository alone.
 
 After that gate, sign in with Azure CLI, select the subscription, create a resource group, and deploy with a secure password parameter from your local environment or secret store:
 
 ```sh
 az account set --subscription <subscription-id>
-az group create --name <resource-group> --location <region>
+az group create --name <resource-group> --location westeurope
 az deployment group create --resource-group <resource-group> --template-file infra/main.bicep --parameters namePrefix=<unique-prefix> postgresPassword=<secure-value> tenantId=<tenant-guid> apiAudience=<api-client-id> appIdUri=api://<api-client-id> browserClientId=<browser-client-id>
 ```
 
