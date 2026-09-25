@@ -60,17 +60,18 @@ public sealed class ApiTests : IAsyncLifetime
         using var document = JsonDocument.Parse(await _client.GetByteArrayAsync("/swagger/v1/swagger.json"));
         var paths = document.RootElement.GetProperty("paths");
         var schemas = document.RootElement.GetProperty("components").GetProperty("schemas");
-        foreach (var resource in new[] { "components", "boards", "orders" })
+        foreach (var (resource, input) in new[]
+            { ("components", "ComponentInput"), ("boards", "BoardEdit"), ("orders", "OrderInput") })
         {
             var schema = paths.GetProperty($"/api/{resource}/{{id}}")
                 .GetProperty("put").GetProperty("requestBody").GetProperty("content")
                 .GetProperty("application/json").GetProperty("schema");
-            Assert.True(schema.TryGetProperty("$ref", out var reference), schema.GetRawText());
-            Assert.EndsWith($"/{resource[..^1]}Update", reference.GetString(),
-                StringComparison.OrdinalIgnoreCase);
-            var requestSchema = schemas.GetProperty($"{char.ToUpperInvariant(resource[0])}{resource[1..^1]}Update");
-            Assert.True(requestSchema.GetProperty("properties").EnumerateObject().Any());
-            Assert.False(requestSchema.TryGetProperty("required", out var required) && required.GetArrayLength() > 0);
+            var inputProperties = schemas.GetProperty(input).GetProperty("properties").EnumerateObject()
+                .Select(property => property.Name).OrderBy(name => name).ToList();
+            var updateProperties = schema.GetProperty("properties").EnumerateObject()
+                .Select(property => property.Name).OrderBy(name => name).ToList();
+            Assert.Equal(inputProperties, updateProperties);
+            Assert.False(schema.TryGetProperty("required", out var required) && required.GetArrayLength() > 0);
         }
     }
 

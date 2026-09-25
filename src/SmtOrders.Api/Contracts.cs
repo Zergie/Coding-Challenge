@@ -1,8 +1,6 @@
 namespace SmtOrders.Api;
 
 public sealed record ComponentInput(string PartNumber, string Name, string Description, long PhysicalStock);
-public sealed record ComponentUpdate(string? PartNumber = null, string? Name = null,
-    string? Description = null, long? PhysicalStock = null);
 public sealed record ComponentView(Guid Id, string PartNumber, string Name, string Description,
     long PhysicalStock, long ReservedStock, long AvailableStock);
 public sealed record RecipeInput(Guid ComponentId, long QuantityPerBoard);
@@ -10,16 +8,12 @@ public sealed record BoardInput(string PartNumber, string Name, string Descripti
     decimal WidthMm, IReadOnlyList<RecipeInput> Recipe);
 public sealed record BoardEdit(string Name, string Description, decimal LengthMm, decimal WidthMm,
     IReadOnlyList<RecipeInput> Recipe);
-public sealed record BoardUpdate(string? Name = null, string? Description = null, decimal? LengthMm = null,
-    decimal? WidthMm = null, IReadOnlyList<RecipeInput>? Recipe = null);
 public sealed record RecipeView(Guid ComponentId, string PartNumber, long QuantityPerBoard);
 public sealed record BoardView(Guid Id, string PartNumber, int Revision, string Name, string Description,
     decimal LengthMm, decimal WidthMm, IReadOnlyList<RecipeView> Recipe);
 public sealed record OrderLineInput(Guid BoardId, int Revision, long BuildQuantity);
 public sealed record OrderInput(string Name, string Description, DateOnly OrderDate, DateOnly? DueDate,
     IReadOnlyList<OrderLineInput> Boards);
-public sealed record OrderUpdate(string? Name = null, string? Description = null, DateOnly? OrderDate = null,
-    DateOnly? DueDate = null, IReadOnlyList<OrderLineInput>? Boards = null);
 public sealed record OrderLineView(Guid BoardId, int Revision, long BuildQuantity);
 public sealed record OrderView(Guid Id, string Name, string Description, DateOnly OrderDate, DateOnly? DueDate,
     string Status, DateTimeOffset? StartedAtUtc, IReadOnlyList<OrderLineView> Boards);

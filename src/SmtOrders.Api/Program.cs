@@ -126,7 +126,7 @@ api.MapGet("/components", (string? q, CatalogService service) => service.SearchC
 api.MapGet("/components/{id:guid}", async (Guid id, CatalogService service) =>
     await service.FindComponent(id) is { } result ? Results.Ok(result) : Results.NotFound(new { code = "not_found", message = "Component was not found." }));
 api.MapPut("/components/{id:guid}", (Guid id, JsonElement update, CatalogService service) =>
-    service.UpdateComponent(id, update)).Accepts<ComponentUpdate>("application/json");
+    service.UpdateComponent(id, update)).Accepts<ComponentInput>("application/json");
 api.MapDelete("/components/{id:guid}", async (Guid id, CatalogService service) =>
 { await service.DeleteComponent(id); return Results.NoContent(); });
 
@@ -143,7 +143,7 @@ api.MapGet("/boards/{id:guid}/revisions", async (Guid id, CatalogService service
 api.MapGet("/boards/{id:guid}/revisions/{revision:int}", async (Guid id, int revision, CatalogService service) =>
     await service.FindBoard(id, revision) is { } result ? Results.Ok(result) : Results.NotFound(new { code = "not_found", message = "Board revision was not found." }));
 api.MapPut("/boards/{id:guid}", (Guid id, JsonElement update, CatalogService service) =>
-    service.ReviseBoard(id, update)).Accepts<BoardUpdate>("application/json");
+    service.ReviseBoard(id, update)).Accepts<BoardEdit>("application/json");
 api.MapDelete("/boards/{id:guid}", async (Guid id, CatalogService service) =>
 { await service.DeleteBoard(id); return Results.NoContent(); });
 
@@ -156,7 +156,7 @@ api.MapGet("/orders", (string? q, OrderService service) => service.Search(q));
 api.MapGet("/orders/{id:guid}", async (Guid id, OrderService service) =>
     await service.Find(id) is { } result ? Results.Ok(result) : Results.NotFound(new { code = "not_found", message = "Order was not found." }));
 api.MapPut("/orders/{id:guid}", (Guid id, JsonElement update, OrderService service) =>
-    service.Update(id, update)).Accepts<OrderUpdate>("application/json");
+    service.Update(id, update)).Accepts<OrderInput>("application/json");
 api.MapDelete("/orders/{id:guid}", async (Guid id, OrderService service) =>
 { await service.Delete(id); return Results.NoContent(); });
 api.MapPost("/orders/{id:guid}/download", async (Guid id, OrderService service, HttpContext context) =>
