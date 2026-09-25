@@ -77,12 +77,14 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 var app = builder.Build();
-await app.Services.GetRequiredService<Database>().Initialize();
-if (args.Contains("--reset-demo"))
+var database = app.Services.GetRequiredService<Database>();
+if (args.Contains("--clear-data"))
 {
-    await DemoSeed.Reset(app.Services);
+    await database.Clear();
+    Console.WriteLine("Application data cleared. The Table contains only its version record.");
     return;
 }
+await database.Initialize();
 
 app.UseSerilogRequestLogging();
 app.UseExceptionHandler(handler => handler.Run(async context =>

@@ -11,6 +11,13 @@ public sealed class Database(TableClient table)
     public const string Partition = "demo";
     private const string VersionKey = "M:version";
 
+    public async Task Clear()
+    {
+        try { await table.DeleteAsync(); }
+        catch (RequestFailedException e) when (e.Status == 404) { }
+        await Initialize();
+    }
+
     public async Task Initialize()
     {
         for (var attempt = 0; ; attempt++)

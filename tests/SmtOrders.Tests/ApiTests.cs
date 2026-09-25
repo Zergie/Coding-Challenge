@@ -55,6 +55,26 @@ public sealed class ApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Fresh_and_cleared_table_have_no_application_records()
+    {
+        Authenticate();
+        Assert.Empty((await _client.GetFromJsonAsync<List<ComponentView>>("/api/components"))!);
+        Assert.Empty((await _client.GetFromJsonAsync<List<BoardView>>("/api/boards"))!);
+        Assert.Empty((await _client.GetFromJsonAsync<List<OrderView>>("/api/orders"))!);
+
+        var component = await CreateComponent("CLEAR-1", 10);
+        var board = await CreateBoard(component.Id);
+        var order = await _client.PostAsJsonAsync("/api/orders", new OrderInput("Clear me", "Reset check",
+            new DateOnly(2026, 9, 25), null, [new(board.Id, 1, 1)]));
+        Assert.Equal(HttpStatusCode.Created, order.StatusCode);
+
+        await _app.Services.GetRequiredService<Database>().Clear();
+        Assert.Empty((await _client.GetFromJsonAsync<List<ComponentView>>("/api/components"))!);
+        Assert.Empty((await _client.GetFromJsonAsync<List<BoardView>>("/api/boards"))!);
+        Assert.Empty((await _client.GetFromJsonAsync<List<OrderView>>("/api/orders"))!);
+    }
+
+    [Fact]
     public async Task Reviewer_can_create_and_find_component()
     {
         Authenticate();
