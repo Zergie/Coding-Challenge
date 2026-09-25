@@ -26,5 +26,11 @@ services:
       Entra__AppIdUri: ${ENTRA_APP_ID_URI:?Set ENTRA_APP_ID_URI in .env}
       Entra__BrowserClientId: ${ENTRA_BROWSER_CLIENT_ID:?Set ENTRA_BROWSER_CLIENT_ID in .env}
       Production__Destination: SMT-LINE-1
+  web:
+    build: ./web
+    depends_on:
+      - api
+    ports:
+      - "8081:80"
 volumes:
   azurite-data:

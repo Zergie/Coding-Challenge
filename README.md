@@ -1,12 +1,12 @@
 # SMT Order Management
 
-An ASP.NET Core 8 API for Components, versioned Board recipes, stock reservations, Orders, and a production planning handoff. Swagger UI at `/swagger` is the reviewer interface. Azure Table Storage is the only persistent store; local development uses Azurite.
+An ASP.NET Core 8 API and static web interface for Components, versioned Board recipes, stock reservations, Orders, and a production planning handoff. Azure Table Storage is the only persistent store; local development uses Azurite.
 
 ## Design
 
 ```mermaid
 flowchart LR
-    Reviewer[Swagger reviewer] -->|Entra token| API[ASP.NET Core API]
+    Reviewer[Static web UI or Swagger] -->|Entra token| API[ASP.NET Core API]
     API --> Components[ComponentService]
     API --> Boards[BoardService]
     API --> Orders[OrderService]
@@ -28,8 +28,8 @@ Physical stock counts whole pieces. Available stock is physical stock minus rese
 ## Entra registration
 
 1. Create a single tenant API app registration. Expose an Application ID URI such as `api://<api-client-id>` and the delegated scope `access_as_user`. Set `Entra__Audience` to the API token's `aud` value, `Entra__AppIdUri` to the URI, and `Entra__TenantId` to the tenant GUID.
-2. Create a separate single tenant SPA registration. Add Swagger redirect URIs `http://localhost:8080/swagger/oauth2-redirect.html` and `https://<app-name>.azurewebsites.net/swagger/oauth2-redirect.html`. Give it delegated permission for the API scope and grant consent as your tenant requires. Set `Entra__BrowserClientId` to its client ID. Swagger uses authorization code with PKCE.
-3. Use dedicated demo accounts for reviewers and share credentials privately. Authenticated users with the delegated scope have equal application permissions.
+2. Create a separate single tenant SPA registration. Add redirect URIs `http://localhost:8081/auth.html` and `https://<static-app-host>/auth.html` for the web UI, plus `http://localhost:8080/swagger/oauth2-redirect.html` and `https://<api-app>.azurewebsites.net/swagger/oauth2-redirect.html` for Swagger. Give it delegated permission for the API scope and grant admin consent. Set `Entra__BrowserClientId` to its client ID. Both browser interfaces use authorization code with PKCE.
+3. Assign the selected users to both the SPA and API enterprise applications, then set **Assignment required** to **Yes** on both. The API itself requires the delegated `access_as_user` scope. All assigned users share the same data and CRUD permissions within each deployment.
 
 For another localhost port, register its redirect URI. See [Microsoft's JWT bearer guidance](https://learn.microsoft.com/en-us/aspnet/core/security/authentication/configure-jwt-bearer-authentication).
 
@@ -41,7 +41,7 @@ Requirements: Docker Compose and a Microsoft Entra tenant for reviewer sign in. 
 docker compose up --build -d
 ```
 
-Compose runs the Azurite Table service on port 10002 and the API on port 8080. Open `http://localhost:8080/swagger`. `/health` is public; `/api` requires a delegated `access_as_user` token. The API creates its Table and version entity on startup. A fresh installation has no Components, Boards, or Orders.
+Compose runs the Azurite Table service on port 10002, the API on port 8080, and an nginx web UI on port 8081. Open `http://localhost:8081/` and sign in with an assigned Entra account. nginx serves the static page and proxies `/api` to the API container. Swagger remains at `http://localhost:8080/swagger`. `/health` is public; `/api` requires a delegated `access_as_user` token. The API creates its Table and version entity on startup. A fresh installation has no Components, Boards, or Orders. Local Azurite data is separate from Azure data.
 
 Local application events stay on the console; view them with `docker compose logs -f api`.
 
@@ -72,6 +72,14 @@ The shared reviewer API is deployed in West Europe at [smt-orders-e103ef-api.azu
 Verified on 2026-09-25 before clearing the Table: Entra sign-in, Component create/read/delete, Reserved Order creation, first production download, and an identical second download. The test Board consumed three resistors on the first download: physical stock changed from 1,000 to 997 and remained there on retry. All test records were subsequently cleared.
 
 GitHub Actions [builds, tests, and deploys](https://github.com/Zergie/Coding-Challenge/actions/workflows/ci.yml) passing `main` commits. Deployment uses an Entra application with a federated credential for this repository's immutable GitHub identity and the `main` branch. It has Website Contributor access scoped to this Web App. Repository secrets hold the deployment client, tenant, and subscription IDs; no long lived credential is stored. The Swagger SPA's delegated permission is subject to the tenant's consent policy.
+
+### Static web UI
+
+The web UI is deployed at [orange-moss-0c91b0103.2.azurestaticapps.net](https://orange-moss-0c91b0103.2.azurestaticapps.net/) on Azure Static Web Apps Free. It uses the existing API at `https://smt-orders-e103ef-api.azurewebsites.net`. The API allows CORS only from this site. The UI obtains an Entra access token in the browser and sends it to the API; it contains no client secret. The two dedicated reviewer accounts are assigned to both enterprise applications. Their credentials are delivered privately and are never stored in the repository.
+
+To rebuild the static files, run `npm ci` and `npm run typecheck && npm run build` in `web/`. `web/config.azure.json` and `web/config.local.json` contain public Entra IDs, the delegated scope, and the API base URL. Update these files and the SPA redirect URIs for another deployment. For a local nginx image, `docker compose up --build -d` builds with `WEB_TARGET=local` and copies `config.local.json` into the image. The Azure build uses `config.azure.json`.
+
+The GitHub workflow builds and typechecks the UI. Its `deploy-web` job runs on `main` when repository variable `AZURE_STATIC_WEB_APP_NAME` is set to the Static Web App name and secret `AZURE_STATIC_WEB_APPS_API_TOKEN` holds its deployment token. Until both are configured, deploy the built `web/dist` directory with the [Azure Static Web Apps CLI](https://learn.microsoft.com/en-us/azure/static-web-apps/static-web-apps-cli), using a deployment token kept outside source control.
 
 ### Set up a new deployment with Azure CLI
 
