@@ -13,7 +13,18 @@ public sealed class Database(TableClient table)
 
     public async Task Initialize()
     {
-        await table.CreateIfNotExistsAsync();
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                await table.CreateIfNotExistsAsync();
+                break;
+            }
+            catch (RequestFailedException e) when (e.ErrorCode == "TableBeingDeleted" && attempt < 59)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2));
+            }
+        }
         try { await table.AddEntityAsync(new TableEntity(Partition, VersionKey) { ["Value"] = 0L }); }
         catch (RequestFailedException e) when (e.Status == 409) { }
     }

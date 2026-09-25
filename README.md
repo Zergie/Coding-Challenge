@@ -83,7 +83,13 @@ Use real IDs returned by the API for Board and Order requests. Invalid input ret
 
 The download media type is `application/vnd.smt-production.v1+json` and `schemaVersion` is `1.0`. It is a planning and kitting handoff for `SMT-LINE-1`. It contains Order dates and UTC start time, ordered Board lines with dimensions and build quantities, per Board Component requirements, and aggregate materials. `placementProgramId` is the Board ID plus revision. The actual placement program is managed outside this API; the JSON contains no placement coordinates.
 
-## Azure deployment preparation
+## Live Azure demo
+
+The shared reviewer API is deployed in West Europe at [smt-orders-e103ef-api.azurewebsites.net/swagger](https://smt-orders-e103ef-api.azurewebsites.net/swagger). Its resource group is `rg-smt-orders-demo` in subscription `85ed71b1-83f9-4a91-bf61-78fd20259323`. It uses Azure Table Storage and a managed identity. The Table is seeded with three Components, a Controller Board, and a Reserved Order. Sign in through Swagger using a tenant account allowed to consent to the delegated `access_as_user` scope; list `/api/orders` to find the current Order ID. The public `/health` endpoint returns `200`; an anonymous `/api/components` request returns `401`.
+
+GitHub Actions [builds, tests, and deploys](https://github.com/Zergie/Coding-Challenge/actions/workflows/ci.yml) passing `main` commits. Deployment uses an Entra application with a federated credential for this repository's immutable GitHub identity and the `main` branch. It has Website Contributor access scoped to this Web App. Repository secrets hold the deployment client, tenant, and subscription IDs; no long lived credential is stored. The Swagger SPA's delegated permission is subject to the tenant's consent policy.
+
+## Azure deployment setup
 
 `infra/main.bicep` defines a Windows App Service F1 plan, a Standard LRS StorageV2 account, a Table, and a system assigned Web App identity with Storage Table Data Contributor on the storage account. The application uses `DefaultAzureCredential` and the Table service endpoint; no storage account key is placed in App Service settings. The region is West Europe (`westeurope`). The [retail estimate](docs/azure-cost-estimate.md) is about **$0.05/month** for 1 GB and 100,000 operations, below the $5/month soft target; check actual subscription pricing before provisioning.
 
@@ -101,7 +107,7 @@ az group create --name $resourceGroup --location westeurope
 az deployment group create --resource-group $resourceGroup --template-file infra/main.bicep --parameters namePrefix=$namePrefix tenantId=$tenantId apiAudience=$apiClientId appIdUri="api://$apiClientId" browserClientId=$browserClientId
 ```
 
-Allow time for role assignment propagation before the app first accesses Table Storage. Verify `/health`, anonymous `401`, Entra sign in, and the create-to-download path. The optional GitHub workflow deploys only on a `main` push when `vars.AZURE_WEBAPP_NAME` is set; configure OIDC secrets and a federated credential before using it. [Azure's App Service deployment guide](https://learn.microsoft.com/en-us/azure/app-service/deploy-github-actions) covers that setup. Remove the resource group when review ends to stop storage charges.
+Allow time for role assignment propagation before the app first accesses Table Storage. Verify `/health`, anonymous `401`, Entra sign in, and the create-to-download path. The GitHub workflow deploys on a passing `main` push when `vars.AZURE_WEBAPP_NAME` is set; configure OIDC secrets and a federated credential before using it. [Azure's App Service deployment guide](https://learn.microsoft.com/en-us/azure/app-service/deploy-github-actions) covers that setup. Remove the resource group when review ends to stop storage charges.
 
 ## Limits
 
