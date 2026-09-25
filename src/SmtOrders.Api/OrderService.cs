@@ -87,7 +87,8 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
                 var revisionRow = await db.Get(CatalogService.RevisionKey(line.BoardId, line.Revision))
                     ?? throw Database.Missing("Board revision");
                 var revision = Database.Data<BoardRevisionRecord>(revisionRow);
-                changes.Add(new TableEntity(Database.Partition, $"SB:{prefix}:{Database.Id(line.BoardId)}")
+                var boardSuffix = $"{Database.Id(line.BoardId)}:{line.Revision:D10}";
+                changes.Add(new TableEntity(Database.Partition, $"SB:{prefix}:{boardSuffix}")
                 {
                     ["PartNumber"] = board.PartNumber, ["Revision"] = revision.Revision,
                     ["LengthMilliMm"] = (long)(revision.LengthMm * 1000), ["WidthMilliMm"] = (long)(revision.WidthMm * 1000),
@@ -98,7 +99,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
                     var componentRow = await db.Get("C:" + Database.Id(ingredient.ComponentId)) ?? throw Database.Missing("Component");
                     var component = Database.Data<ComponentRecord>(componentRow);
                     changes.Add(new TableEntity(Database.Partition,
-                        $"SC:{prefix}:{Database.Id(line.BoardId)}:{Database.Id(ingredient.ComponentId)}")
+                        $"SC:{prefix}:{boardSuffix}:{Database.Id(ingredient.ComponentId)}")
                     {
                         ["PartNumber"] = component.PartNumber, ["QuantityPerBoard"] = ingredient.QuantityPerBoard,
                         ["TotalRequired"] = checked(ingredient.QuantityPerBoard * line.BuildQuantity)
@@ -176,9 +177,10 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         var materials = new Dictionary<string, long>(StringComparer.Ordinal);
         foreach (var boardRow in await db.List("SB:" + prefix + ":"))
         {
-            var boardId = Guid.ParseExact(boardRow.RowKey.Split(':')[2], "N");
+            var boardSuffix = boardRow.RowKey[("SB:" + prefix + ":").Length..];
+            var boardId = Guid.ParseExact(boardSuffix.Split(':')[0], "N");
             var components = new List<HandoffComponent>();
-            foreach (var componentRow in await db.List($"SC:{prefix}:{Database.Id(boardId)}:"))
+            foreach (var componentRow in await db.List($"SC:{prefix}:{boardSuffix}:"))
             {
                 var part = (string)componentRow["PartNumber"];
                 var total = (long)componentRow["TotalRequired"];
@@ -195,7 +197,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         return new((string)header["SchemaVersion"], (string)header["Destination"], id,
             (string)header["OrderName"], DateOnly.Parse((string)header["OrderDate"]),
             due == "" ? null : DateOnly.Parse(due), (DateTimeOffset)header["StartedAtUtc"],
-            boards.OrderBy(x => x.BoardId).ToList(),
+            boards.OrderBy(x => x.BoardId).ThenBy(x => x.Revision).ToList(),
             materials.OrderBy(x => x.Key).Select(x => new HandoffMaterial(x.Key, x.Value)).ToList());
     }
 
@@ -210,8 +212,8 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         if (input.DueDate < input.OrderDate) throw new DomainException(400, "invalid_input", "Due date precedes Order date.");
         if (input.Boards is null || input.Boards.Count == 0)
             throw new DomainException(400, "invalid_input", "An Order needs at least one Board.");
-        if (input.Boards.Select(x => x.BoardId).Distinct().Count() != input.Boards.Count)
-            throw new DomainException(400, "invalid_input", "Order contains a duplicate Board.");
+        if (input.Boards.Select(x => (x.BoardId, x.Revision)).Distinct().Count() != input.Boards.Count)
+            throw new DomainException(400, "invalid_input", "Order contains a duplicate Board revision.");
         foreach (var line in input.Boards)
         {
             Database.Positive(line.BuildQuantity, "Build quantity");

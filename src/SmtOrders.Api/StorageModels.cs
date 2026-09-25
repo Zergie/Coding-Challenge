@@ -15,5 +15,6 @@ internal sealed record OrderRecord(Guid Id, string Name, string Description, Dat
     Dictionary<Guid, long> Demand, DateTimeOffset CreatedAtUtc)
 {
     public OrderView View() => new(Id, Name, Description, OrderDate, DueDate, Status, StartedAtUtc,
-        Boards.OrderBy(x => x.BoardId).Select(x => new OrderLineView(x.BoardId, x.Revision, x.BuildQuantity)).ToList());
+        Boards.OrderBy(x => x.BoardId).ThenBy(x => x.Revision)
+            .Select(x => new OrderLineView(x.BoardId, x.Revision, x.BuildQuantity)).ToList());
 }

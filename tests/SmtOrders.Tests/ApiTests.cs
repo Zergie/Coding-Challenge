@@ -175,6 +175,64 @@ public sealed class ApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Order_can_reserve_two_revisions_of_the_same_board()
+    {
+        Authenticate();
+        var component = await CreateComponent("TWO-REVISIONS", 30);
+        var board = await CreateBoard(component.Id);
+        var revision = await _client.PutAsJsonAsync($"/api/boards/{board.Id}",
+            new BoardEdit("Board", "Updated recipe", 100, 50, [new RecipeInput(component.Id, 1)]));
+        Assert.Equal(HttpStatusCode.OK, revision.StatusCode);
+
+        var input = new OrderInput("Two revisions", "One Board, two recipes", new DateOnly(2026, 9, 25),
+            new DateOnly(2026, 9, 25), [new(board.Id, 2, 4), new(board.Id, 1, 2)]);
+        var created = await _client.PostAsJsonAsync("/api/orders", input);
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var order = (await created.Content.ReadFromJsonAsync<OrderView>())!;
+        Assert.Equal([1, 2], order.Boards.Select(x => x.Revision));
+        Assert.Equal(10, (await _client.GetFromJsonAsync<ComponentView>($"/api/components/{component.Id}"))!.ReservedStock);
+
+        var downloaded = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
+        Assert.Equal(HttpStatusCode.OK, downloaded.StatusCode);
+        var handoff = (await downloaded.Content.ReadFromJsonAsync<ProductionHandoff>())!;
+        Assert.Equal([1, 2], handoff.Boards.Select(x => x.Revision));
+        Assert.Equal([6, 4], handoff.Boards.Select(x => x.Components.Single().TotalRequired));
+        Assert.Equal(10, handoff.Materials.Single().TotalRequired);
+        var afterDownload = (await _client.GetFromJsonAsync<ComponentView>($"/api/components/{component.Id}"))!;
+        Assert.Equal(20, afterDownload.PhysicalStock);
+        Assert.Equal(0, afterDownload.ReservedStock);
+    }
+
+    [Fact]
+    public async Task Order_edit_accepts_distinct_revisions_but_rejects_a_repeated_pair()
+    {
+        Authenticate();
+        var component = await CreateComponent("EDIT-REVISIONS", 30);
+        var board = await CreateBoard(component.Id);
+        var revision = await _client.PutAsJsonAsync($"/api/boards/{board.Id}",
+            new BoardEdit("Board", "Updated recipe", 100, 50, [new RecipeInput(component.Id, 1)]));
+        Assert.Equal(HttpStatusCode.OK, revision.StatusCode);
+
+        var input = new OrderInput("Revision edit", "Pair uniqueness", new DateOnly(2026, 9, 25), null,
+            [new(board.Id, 1, 1)]);
+        var repeated = input with { Boards = [new(board.Id, 1, 1), new(board.Id, 1, 2)] };
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.PostAsJsonAsync("/api/orders", repeated)).StatusCode);
+        var created = await _client.PostAsJsonAsync("/api/orders", input);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var order = (await created.Content.ReadFromJsonAsync<OrderView>())!;
+
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await _client.PutAsJsonAsync($"/api/orders/{order.Id}", repeated)).StatusCode);
+        Assert.Equal(3, (await _client.GetFromJsonAsync<ComponentView>($"/api/components/{component.Id}"))!.ReservedStock);
+        var distinct = input with { Boards = [new(board.Id, 1, 1), new(board.Id, 2, 2)] };
+        var edited = await _client.PutAsJsonAsync($"/api/orders/{order.Id}", distinct);
+        Assert.Equal(HttpStatusCode.OK, edited.StatusCode);
+        Assert.Equal([1, 2], ((await edited.Content.ReadFromJsonAsync<OrderView>())!).Boards.Select(x => x.Revision));
+        Assert.Equal(5, (await _client.GetFromJsonAsync<ComponentView>($"/api/components/{component.Id}"))!.ReservedStock);
+    }
+
+    [Fact]
     public async Task Catalog_validation_search_and_unreferenced_deletion_are_visible_over_http()
     {
         Authenticate();
