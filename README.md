@@ -87,6 +87,8 @@ The download media type is `application/vnd.smt-production.v1+json` and `schemaV
 
 The shared reviewer API is deployed in West Europe at [smt-orders-e103ef-api.azurewebsites.net/swagger](https://smt-orders-e103ef-api.azurewebsites.net/swagger). Its resource group is `rg-smt-orders-demo` in subscription `85ed71b1-83f9-4a91-bf61-78fd20259323`. It uses Azure Table Storage and a managed identity. The Table is seeded with three Components, a Controller Board, and a Reserved Order. Sign in through Swagger using a tenant account allowed to consent to the delegated `access_as_user` scope; list `/api/orders` to find the current Order ID. The public `/health` endpoint returns `200`; an anonymous `/api/components` request returns `401`.
 
+Verified on 2026-09-25: Entra sign-in, Component create/read/delete, Reserved Order creation, first production download, and an identical second download. The sample Board consumed three resistors on the first download: physical stock changed from 1,000 to 997 and remained there on retry. The original seeded Order remains Reserved for the walkthrough.
+
 GitHub Actions [builds, tests, and deploys](https://github.com/Zergie/Coding-Challenge/actions/workflows/ci.yml) passing `main` commits. Deployment uses an Entra application with a federated credential for this repository's immutable GitHub identity and the `main` branch. It has Website Contributor access scoped to this Web App. Repository secrets hold the deployment client, tenant, and subscription IDs; no long lived credential is stored. The Swagger SPA's delegated permission is subject to the tenant's consent policy.
 
 ## Azure deployment setup
