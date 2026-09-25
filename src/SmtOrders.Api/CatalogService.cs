@@ -1,4 +1,5 @@
 using Azure.Data.Tables;
+using System.Text.Json;
 
 namespace SmtOrders.Api;
 
@@ -30,13 +31,15 @@ public sealed class CatalogService(Database db, ILogger<CatalogService> log)
             .Where(x => Match(x.Name, x.Description, query)).OrderBy(x => x.Name).ThenBy(x => x.Id)
             .Select(x => x.View()).ToList();
 
-    public async Task<ComponentView> UpdateComponent(Guid id, ComponentInput input)
+    public async Task<ComponentView> UpdateComponent(Guid id, JsonElement update)
     {
-        Validate(input);
         var result = await db.Write(async changes =>
         {
             var oldRow = await db.Get("C:" + Database.Id(id)) ?? throw Database.Missing("Component");
             var old = Database.Data<ComponentRecord>(oldRow);
+            var input = PartialUpdate.Apply(update, new ComponentInput(old.PartNumber, old.Name,
+                old.Description, old.PhysicalStock));
+            Validate(input);
             if (input.PhysicalStock < old.ReservedStock)
                 throw new DomainException(409, "stock_reserved",
                     $"Component {old.PartNumber} requires {old.ReservedStock} reserved pieces; requested physical stock is {input.PhysicalStock}.");
@@ -129,15 +132,19 @@ public sealed class CatalogService(Database db, ILogger<CatalogService> log)
         return results.OrderBy(x => x.Name).ThenBy(x => x.Id).ToList();
     });
 
-    public async Task<BoardView> ReviseBoard(Guid id, BoardEdit input)
+    public async Task<BoardView> ReviseBoard(Guid id, JsonElement update)
     {
-        Validate(input);
         var result = await db.Write(async changes =>
         {
             var row = await db.Get("B:" + Database.Id(id)) ?? throw Database.Missing("Board");
             var board = Database.Data<BoardRecord>(row);
             if (board.LatestRevision >= 97)
                 throw new DomainException(400, "revision_limit", "A Board supports at most 97 revisions in this demo.");
+            var latestRow = await db.Get(RevisionKey(id, board.LatestRevision)) ?? throw new StaleReadException();
+            var latest = Database.Data<BoardRevisionRecord>(latestRow);
+            var input = PartialUpdate.Apply(update, new BoardEdit(latest.Name, latest.Description,
+                latest.LengthMm, latest.WidthMm, latest.Recipe));
+            Validate(input);
             await CheckComponents(input.Recipe);
             var revision = MakeRevision(id, checked(board.LatestRevision + 1), input);
             changes.Replace(row, Database.Row(row.RowKey, board with { LatestRevision = revision.Revision }));

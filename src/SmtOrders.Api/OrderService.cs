@@ -1,4 +1,5 @@
 using Azure.Data.Tables;
+using System.Text.Json;
 
 namespace SmtOrders.Api;
 
@@ -30,14 +31,16 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
             || x.Description.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase))
         .OrderBy(x => x.CreatedAtUtc).ThenBy(x => x.Id).Select(x => x.View()).ToList();
 
-    public async Task<OrderView> Update(Guid id, OrderInput input)
+    public async Task<OrderView> Update(Guid id, JsonElement update)
     {
-        Validate(input);
         var result = await db.Write(async changes =>
         {
             var row = await db.Get("O:" + Database.Id(id)) ?? throw Database.Missing("Order");
             var old = Database.Data<OrderRecord>(row);
             if (old.Status == "Started") throw Started();
+            var input = PartialUpdate.Apply(update, new OrderInput(old.Name, old.Description,
+                old.OrderDate, old.DueDate, old.Boards));
+            Validate(input);
             var (demand, recipeLines) = await Demand(input.Boards);
             CheckDownloadCapacity(input.Boards.Count, recipeLines, demand.Count);
             await AdjustStock(changes, demand, old.Demand);

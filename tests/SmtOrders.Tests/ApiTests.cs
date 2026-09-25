@@ -55,6 +55,26 @@ public sealed class ApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Swagger_describes_partial_put_request_bodies()
+    {
+        using var document = JsonDocument.Parse(await _client.GetByteArrayAsync("/swagger/v1/swagger.json"));
+        var paths = document.RootElement.GetProperty("paths");
+        var schemas = document.RootElement.GetProperty("components").GetProperty("schemas");
+        foreach (var resource in new[] { "components", "boards", "orders" })
+        {
+            var schema = paths.GetProperty($"/api/{resource}/{{id}}")
+                .GetProperty("put").GetProperty("requestBody").GetProperty("content")
+                .GetProperty("application/json").GetProperty("schema");
+            Assert.True(schema.TryGetProperty("$ref", out var reference), schema.GetRawText());
+            Assert.EndsWith($"/{resource[..^1]}Update", reference.GetString(),
+                StringComparison.OrdinalIgnoreCase);
+            var requestSchema = schemas.GetProperty($"{char.ToUpperInvariant(resource[0])}{resource[1..^1]}Update");
+            Assert.True(requestSchema.GetProperty("properties").EnumerateObject().Any());
+            Assert.False(requestSchema.TryGetProperty("required", out var required) && required.GetArrayLength() > 0);
+        }
+    }
+
+    [Fact]
     public async Task Fresh_and_cleared_table_have_no_application_records()
     {
         Authenticate();
@@ -144,6 +164,86 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NoContent, (await _client.DeleteAsync($"/api/orders/{order.Id}")).StatusCode);
         stock = await _client.GetFromJsonAsync<ComponentView>($"/api/components/{component.Id}");
         Assert.Equal(0, stock?.ReservedStock);
+    }
+
+    [Fact]
+    public async Task Component_put_can_update_only_physical_stock_without_clearing_other_fields()
+    {
+        Authenticate();
+        var component = await CreateComponent("PARTIAL-STOCK", 10);
+        var board = await CreateBoard(component.Id);
+        var order = await _client.PostAsJsonAsync("/api/orders", new OrderInput("Reserved", "Stock update",
+            new DateOnly(2026, 9, 25), null, [new(board.Id, 1, 2)]));
+        Assert.Equal(HttpStatusCode.Created, order.StatusCode);
+
+        var updatedResponse = await _client.PutAsJsonAsync($"/api/components/{component.Id}",
+            new { physicalStock = 20000L });
+        Assert.Equal(HttpStatusCode.OK, updatedResponse.StatusCode);
+        var updated = (await updatedResponse.Content.ReadFromJsonAsync<ComponentView>())!;
+        Assert.Equal("PARTIAL-STOCK", updated.PartNumber);
+        Assert.Equal("Part", updated.Name);
+        Assert.Equal("Demo part", updated.Description);
+        Assert.Equal(20000, updated.PhysicalStock);
+        Assert.Equal(6, updated.ReservedStock);
+        Assert.Equal(19994, updated.AvailableStock);
+
+        Assert.Equal(HttpStatusCode.Conflict, (await _client.PutAsJsonAsync($"/api/components/{component.Id}",
+            new { physicalStock = 5L })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.PutAsJsonAsync($"/api/components/{component.Id}",
+            new { physicalStock = -1L })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.PutAsJsonAsync($"/api/components/{component.Id}",
+            new { physicalStok = 7L })).StatusCode);
+        Assert.Equal(20000, (await _client.GetFromJsonAsync<ComponentView>($"/api/components/{component.Id}"))!.PhysicalStock);
+    }
+
+    [Fact]
+    public async Task Board_put_can_change_one_field_and_preserve_the_rest_of_the_recipe()
+    {
+        Authenticate();
+        var component = await CreateComponent("PARTIAL-BOARD", 10);
+        var board = await CreateBoard(component.Id);
+
+        var response = await _client.PutAsJsonAsync($"/api/boards/{board.Id}", new { name = "Renamed board" });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var revised = (await response.Content.ReadFromJsonAsync<BoardView>())!;
+        Assert.Equal(2, revised.Revision);
+        Assert.Equal("Renamed board", revised.Name);
+        Assert.Equal(board.Description, revised.Description);
+        Assert.Equal(board.LengthMm, revised.LengthMm);
+        Assert.Equal(board.WidthMm, revised.WidthMm);
+        Assert.Equal(board.Recipe, revised.Recipe);
+        Assert.Equal(board.Name, (await _client.GetFromJsonAsync<BoardView>(
+            $"/api/boards/{board.Id}/revisions/1"))!.Name);
+    }
+
+    [Fact]
+    public async Task Order_put_can_update_selected_fields_and_clear_due_date()
+    {
+        Authenticate();
+        var component = await CreateComponent("PARTIAL-ORDER", 10);
+        var board = await CreateBoard(component.Id);
+        var created = await _client.PostAsJsonAsync("/api/orders", new OrderInput("Original", "Keep me",
+            new DateOnly(2026, 9, 25), new DateOnly(2026, 9, 30), [new(board.Id, 1, 2)]));
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var order = (await created.Content.ReadFromJsonAsync<OrderView>())!;
+
+        var renamedResponse = await _client.PutAsJsonAsync($"/api/orders/{order.Id}", new { name = "Renamed" });
+        Assert.Equal(HttpStatusCode.OK, renamedResponse.StatusCode);
+        var renamed = (await renamedResponse.Content.ReadFromJsonAsync<OrderView>())!;
+        Assert.Equal("Renamed", renamed.Name);
+        Assert.Equal("Keep me", renamed.Description);
+        Assert.Equal(new DateOnly(2026, 9, 25), renamed.OrderDate);
+        Assert.Equal(new DateOnly(2026, 9, 30), renamed.DueDate);
+        Assert.Equal(order.Boards, renamed.Boards);
+        Assert.Equal(6, (await _client.GetFromJsonAsync<ComponentView>($"/api/components/{component.Id}"))!.ReservedStock);
+
+        var cleared = await _client.PutAsJsonAsync($"/api/orders/{order.Id}", new { dueDate = (DateOnly?)null });
+        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+        Assert.Null((await cleared.Content.ReadFromJsonAsync<OrderView>())!.DueDate);
+        var changedBoards = await _client.PutAsJsonAsync($"/api/orders/{order.Id}",
+            new { boards = new[] { new OrderLineInput(board.Id, 1, 1) } });
+        Assert.Equal(HttpStatusCode.OK, changedBoards.StatusCode);
+        Assert.Equal(3, (await _client.GetFromJsonAsync<ComponentView>($"/api/components/{component.Id}"))!.ReservedStock);
     }
 
     [Fact]

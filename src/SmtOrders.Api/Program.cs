@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.OpenApi.Models;
+using System.Text.Json;
 using Azure.Data.Tables;
 using Azure.Identity;
 using Serilog;
@@ -56,6 +57,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
     options.SwaggerDoc("v1", new OpenApiInfo { Title = "SMT Order Management", Version = "v1" });
+    options.OperationFilter<PartialUpdateOperationFilter>();
     options.AddSecurityDefinition("Entra", new OpenApiSecurityScheme
     {
         Type = SecuritySchemeType.OAuth2,
@@ -123,7 +125,8 @@ api.MapPost("/components", async (ComponentInput input, CatalogService service) 
 api.MapGet("/components", (string? q, CatalogService service) => service.SearchComponents(q));
 api.MapGet("/components/{id:guid}", async (Guid id, CatalogService service) =>
     await service.FindComponent(id) is { } result ? Results.Ok(result) : Results.NotFound(new { code = "not_found", message = "Component was not found." }));
-api.MapPut("/components/{id:guid}", (Guid id, ComponentInput input, CatalogService service) => service.UpdateComponent(id, input));
+api.MapPut("/components/{id:guid}", (Guid id, JsonElement update, CatalogService service) =>
+    service.UpdateComponent(id, update)).Accepts<ComponentUpdate>("application/json");
 api.MapDelete("/components/{id:guid}", async (Guid id, CatalogService service) =>
 { await service.DeleteComponent(id); return Results.NoContent(); });
 
@@ -139,7 +142,8 @@ api.MapGet("/boards/{id:guid}/revisions", async (Guid id, CatalogService service
     await service.ListBoardRevisions(id) is { } result ? Results.Ok(result) : Results.NotFound(new { code = "not_found", message = "Board was not found." }));
 api.MapGet("/boards/{id:guid}/revisions/{revision:int}", async (Guid id, int revision, CatalogService service) =>
     await service.FindBoard(id, revision) is { } result ? Results.Ok(result) : Results.NotFound(new { code = "not_found", message = "Board revision was not found." }));
-api.MapPut("/boards/{id:guid}", (Guid id, BoardEdit input, CatalogService service) => service.ReviseBoard(id, input));
+api.MapPut("/boards/{id:guid}", (Guid id, JsonElement update, CatalogService service) =>
+    service.ReviseBoard(id, update)).Accepts<BoardUpdate>("application/json");
 api.MapDelete("/boards/{id:guid}", async (Guid id, CatalogService service) =>
 { await service.DeleteBoard(id); return Results.NoContent(); });
 
@@ -151,7 +155,8 @@ api.MapPost("/orders", async (OrderInput input, OrderService service) =>
 api.MapGet("/orders", (string? q, OrderService service) => service.Search(q));
 api.MapGet("/orders/{id:guid}", async (Guid id, OrderService service) =>
     await service.Find(id) is { } result ? Results.Ok(result) : Results.NotFound(new { code = "not_found", message = "Order was not found." }));
-api.MapPut("/orders/{id:guid}", (Guid id, OrderInput input, OrderService service) => service.Update(id, input));
+api.MapPut("/orders/{id:guid}", (Guid id, JsonElement update, OrderService service) =>
+    service.Update(id, update)).Accepts<OrderUpdate>("application/json");
 api.MapDelete("/orders/{id:guid}", async (Guid id, OrderService service) =>
 { await service.Delete(id); return Results.NoContent(); });
 api.MapPost("/orders/{id:guid}/download", async (Guid id, OrderService service, HttpContext context) =>
