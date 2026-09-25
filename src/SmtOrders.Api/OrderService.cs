@@ -174,31 +174,33 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         var prefix = Database.Id(id);
         var header = await db.Get("S:" + prefix) ?? throw new InvalidOperationException("Started Order has no production snapshot.");
         var boards = new List<HandoffBoard>();
-        var materials = new Dictionary<string, long>(StringComparer.Ordinal);
+        var materials = new Dictionary<Guid, HandoffMaterial>();
         foreach (var boardRow in await db.List("SB:" + prefix + ":"))
         {
             var boardSuffix = boardRow.RowKey[("SB:" + prefix + ":").Length..];
             var boardId = Guid.ParseExact(boardSuffix.Split(':')[0], "N");
             var components = new List<HandoffComponent>();
-            foreach (var componentRow in await db.List($"SC:{prefix}:{boardSuffix}:"))
+            var componentPrefix = $"SC:{prefix}:{boardSuffix}:";
+            foreach (var componentRow in await db.List(componentPrefix))
             {
+                var componentId = Guid.ParseExact(componentRow.RowKey[componentPrefix.Length..], "N");
                 var part = (string)componentRow["PartNumber"];
                 var total = (long)componentRow["TotalRequired"];
-                components.Add(new(part, (long)componentRow["QuantityPerBoard"], total));
-                materials[part] = checked(materials.GetValueOrDefault(part) + total);
+                components.Add(new(componentId, part, (long)componentRow["QuantityPerBoard"]));
+                materials[componentId] = new(componentId, part,
+                    checked((materials.GetValueOrDefault(componentId)?.TotalRequired ?? 0) + total));
             }
             var revision = (int)boardRow["Revision"];
             boards.Add(new(boardId, (string)boardRow["PartNumber"], revision,
                 (long)boardRow["LengthMilliMm"] / 1000m, (long)boardRow["WidthMilliMm"] / 1000m,
-                (long)boardRow["BuildQuantity"], $"{boardId:N}/r{revision}",
-                components.OrderBy(x => x.PartNumber).ToList()));
+                (long)boardRow["BuildQuantity"], components.OrderBy(x => x.PartNumber).ToList()));
         }
         var due = (string)header["DueDate"];
         return new((string)header["SchemaVersion"], (string)header["Destination"], id,
             (string)header["OrderName"], DateOnly.Parse((string)header["OrderDate"]),
             due == "" ? null : DateOnly.Parse(due), (DateTimeOffset)header["StartedAtUtc"],
             boards.OrderBy(x => x.BoardId).ThenBy(x => x.Revision).ToList(),
-            materials.OrderBy(x => x.Key).Select(x => new HandoffMaterial(x.Key, x.Value)).ToList());
+            materials.Values.OrderBy(x => x.PartNumber).ThenBy(x => x.ComponentId).ToList());
     }
 
     private static OrderRecord MakeOrder(Guid id, OrderInput input, IReadOnlyDictionary<Guid, long> demand) =>

@@ -18,10 +18,10 @@ public sealed record OrderLineView(Guid BoardId, int Revision, long BuildQuantit
 public sealed record OrderView(Guid Id, string Name, string Description, DateOnly OrderDate, DateOnly? DueDate,
     string Status, DateTimeOffset? StartedAtUtc, IReadOnlyList<OrderLineView> Boards);
 
-public sealed record HandoffComponent(string PartNumber, long QuantityPerBoard, long TotalRequired);
+public sealed record HandoffComponent(Guid ComponentId, string PartNumber, long QuantityPerBoard);
 public sealed record HandoffBoard(Guid BoardId, string PartNumber, int Revision, decimal LengthMm,
-    decimal WidthMm, long BuildQuantity, string PlacementProgramId, IReadOnlyList<HandoffComponent> Components);
-public sealed record HandoffMaterial(string PartNumber, long TotalRequired);
+    decimal WidthMm, long BuildQuantity, IReadOnlyList<HandoffComponent> Components);
+public sealed record HandoffMaterial(Guid ComponentId, string PartNumber, long TotalRequired);
 public sealed record ProductionHandoff(string SchemaVersion, string Destination, Guid OrderId, string OrderName,
     DateOnly OrderDate, DateOnly? DueDate, DateTimeOffset ProductionStartedAtUtc,
     IReadOnlyList<HandoffBoard> Boards, IReadOnlyList<HandoffMaterial> Materials);

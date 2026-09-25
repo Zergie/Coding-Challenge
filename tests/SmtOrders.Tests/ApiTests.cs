@@ -222,7 +222,9 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, downloaded.StatusCode);
         var handoff = (await downloaded.Content.ReadFromJsonAsync<ProductionHandoff>())!;
         Assert.Equal([1, 2], handoff.Boards.Select(x => x.Revision));
-        Assert.Equal([6, 4], handoff.Boards.Select(x => x.Components.Single().TotalRequired));
+        Assert.All(handoff.Boards, line => Assert.Equal(component.Id, line.Components.Single().ComponentId));
+        Assert.Equal([3, 1], handoff.Boards.Select(x => x.Components.Single().QuantityPerBoard));
+        Assert.Equal(component.Id, handoff.Materials.Single().ComponentId);
         Assert.Equal(10, handoff.Materials.Single().TotalRequired);
         var afterDownload = (await _client.GetFromJsonAsync<ComponentView>($"/api/components/{component.Id}"))!;
         Assert.Equal(20, afterDownload.PhysicalStock);
@@ -307,8 +309,14 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal(board.Id.ToString(), line.GetProperty("boardId").GetString());
         Assert.Equal(1, line.GetProperty("revision").GetInt32());
         Assert.Equal(2, line.GetProperty("buildQuantity").GetInt64());
-        Assert.Contains(board.Id.ToString("N"), line.GetProperty("placementProgramId").GetString());
-        Assert.Equal(6, root.GetProperty("materials")[0].GetProperty("totalRequired").GetInt64());
+        Assert.False(line.TryGetProperty("placementProgramId", out _));
+        var boardComponent = line.GetProperty("components")[0];
+        Assert.Equal(component.Id.ToString(), boardComponent.GetProperty("componentId").GetString());
+        Assert.Equal(3, boardComponent.GetProperty("quantityPerBoard").GetInt64());
+        Assert.False(boardComponent.TryGetProperty("totalRequired", out _));
+        var material = root.GetProperty("materials")[0];
+        Assert.Equal(component.Id.ToString(), material.GetProperty("componentId").GetString());
+        Assert.Equal(6, material.GetProperty("totalRequired").GetInt64());
         Assert.Equal(HttpStatusCode.Conflict,
             (await _client.PutAsJsonAsync($"/api/orders/{order.Id}", input)).StatusCode);
     }
