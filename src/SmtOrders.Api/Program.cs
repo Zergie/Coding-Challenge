@@ -4,6 +4,7 @@ using System.Text.Json;
 using Azure.Data.Tables;
 using Azure.Identity;
 using Serilog;
+using Serilog.Events;
 using SmtOrders.Api;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -11,6 +12,7 @@ builder.Host.UseSerilog((context, services, logger) =>
 {
     logger.ReadFrom.Configuration(context.Configuration)
         .ReadFrom.Services(services)
+        .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
         .WriteTo.Console();
 
     var home = Environment.GetEnvironmentVariable("HOME");
