@@ -37,7 +37,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         {
             var row = await db.Get(Database.OrderKey(id)) ?? throw Database.Missing("Order");
             var old = Database.Order(row);
-            if (old.Status == "Started") throw Started();
+            if (old.Status == OrderStatus.Started) throw Started();
             var input = PartialUpdate.Apply(update, new OrderInput(old.Name, old.Description,
                 old.OrderDate, old.Boards));
             Validate(input);
@@ -58,7 +58,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         {
             var row = await db.Get(Database.OrderKey(id)) ?? throw Database.Missing("Order");
             var old = Database.Order(row);
-            if (old.Status == "Started") throw Started();
+            if (old.Status == OrderStatus.Started) throw Started();
             await AdjustStock(changes, new Dictionary<Guid, long>(), old.Demand);
             changes.Delete(row);
             return true;
@@ -66,17 +66,17 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         log.LogInformation("Order {OrderId} deleted; reservation released", id);
     }
 
-    public async Task<ProductionDownload> Download(Guid id)
+    public async Task<ProductionHandoff> Download(Guid id)
     {
         var retry = await db.Write(async changes =>
         {
             var row = await db.Get(Database.OrderKey(id)) ?? throw Database.Missing("Order");
             var order = Database.Order(row);
-            if (order.Status == "Started") return true;
+            if (order.Status == OrderStatus.Started) return true;
             var destination = configuration["Production:Destination"];
             Database.Required(destination, "Production destination configuration");
             var started = DateTimeOffset.UtcNow;
-            changes.Add(Database.Row(Database.SnapshotHeaderKey(id), new ProductionSnapshotHeaderV3("3.0", destination!.Trim(),
+            changes.Add(Database.Row(Database.SnapshotHeaderKey(id), new ProductionSnapshotHeader(ProductionHandoff.CurrentSchemaVersion, destination!.Trim(),
                 order.Name, order.OrderDate, started)));
             foreach (var line in order.Boards)
             {
@@ -114,7 +114,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
             }
             changes.Replace(row, Database.OrderRow(order with
             {
-                Status = "Started", StartedAtUtc = started, Demand = new Dictionary<Guid, long>()
+                Status = OrderStatus.Started, StartedAtUtc = started, Demand = new Dictionary<Guid, long>()
             }));
             return false;
         });
@@ -166,12 +166,12 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         }
     }
 
-    private async Task<ProductionDownload> LoadSnapshot(Guid id)
+    private async Task<ProductionHandoff> LoadSnapshot(Guid id)
     {
         var headerRow = await db.Get(Database.SnapshotHeaderKey(id)) ?? throw new InvalidOperationException("Started Order has no production snapshot.");
-        var header = ReadSnapshotHeader(headerRow);
-        var schemaVersion = header.SchemaVersion;
-        var protocol = ParseProtocol(schemaVersion);
+        var header = Database.Data<ProductionSnapshotHeader>(headerRow);
+        if (header.SchemaVersion != ProductionHandoff.CurrentSchemaVersion)
+            throw new InvalidOperationException($"Unsupported production snapshot version: {header.SchemaVersion}.");
         var boards = new List<SnapshotBoard>();
         foreach (var boardRow in await db.List(Database.SnapshotBoardPrefix(id)))
         {
@@ -187,26 +187,8 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
                 (long)boardRow["LengthMilliMm"] / 1000m, (long)boardRow["WidthMilliMm"] / 1000m,
                 (long)boardRow["BuildQuantity"], components.OrderBy(x => x.PartNumber).ToList()));
         }
-        var destination = header.Destination;
-        var orderName = header.OrderName;
-        var orderDate = header.OrderDate;
-        var dueDate = header.DueDate;
-        var startedAt = header.StartedAtUtc;
         var orderedBoards = boards.OrderBy(x => x.BoardId).ThenBy(x => x.Revision).ToList();
         var allComponents = orderedBoards.SelectMany(x => x.Components).ToList();
-        if (protocol == SnapshotProtocol.V1)
-        {
-            var legacyBoards = orderedBoards.Select(board => new LegacyHandoffBoard(board.BoardId,
-                board.PartNumber, board.Revision, board.LengthMm, board.WidthMm, board.BuildQuantity,
-                $"{board.BoardId:N}/r{board.Revision}", board.Components.Select(component =>
-                    new LegacyHandoffComponent(component.PartNumber, component.QuantityPerBoard,
-                        component.TotalRequired)).ToList())).ToList();
-            var legacyMaterials = allComponents.GroupBy(x => x.PartNumber, StringComparer.Ordinal)
-                .Select(group => new LegacyHandoffMaterial(group.Key, SumRequired(group)))
-                .OrderBy(x => x.PartNumber).ToList();
-            return new(new LegacyProductionHandoff(schemaVersion, destination, id, orderName, orderDate,
-                dueDate, startedAt, legacyBoards, legacyMaterials), "application/vnd.smt-production.v1+json");
-        }
         var currentBoards = orderedBoards.Select(board => new HandoffBoard(board.BoardId,
             board.PartNumber, board.Revision, board.LengthMm, board.WidthMm, board.BuildQuantity,
             board.Components.Select(component => new HandoffComponent(component.ComponentId,
@@ -214,52 +196,20 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         var currentMaterials = allComponents.GroupBy(x => x.ComponentId)
             .Select(group => new HandoffMaterial(group.Key, group.First().PartNumber, SumRequired(group)))
             .OrderBy(x => x.PartNumber).ThenBy(x => x.ComponentId).ToList();
-        if (protocol == SnapshotProtocol.V2)
-            return new(new LegacyProductionHandoffV2(schemaVersion, destination, id, orderName, orderDate,
-                dueDate, startedAt, currentBoards, currentMaterials), "application/vnd.smt-production.v2+json");
-        return new(new ProductionHandoff(schemaVersion, destination, id, orderName, orderDate,
-            startedAt, currentBoards, currentMaterials), "application/vnd.smt-production.v3+json");
+        return new(ProductionHandoff.CurrentSchemaVersion, header.Destination, id, header.OrderName, header.OrderDate,
+            header.StartedAtUtc, currentBoards, currentMaterials);
     }
 
     private sealed record SnapshotComponent(Guid ComponentId, string PartNumber, long QuantityPerBoard, long TotalRequired);
     private sealed record SnapshotBoard(Guid BoardId, string PartNumber, int Revision, decimal LengthMm,
         decimal WidthMm, long BuildQuantity, IReadOnlyList<SnapshotComponent> Components);
 
-    private static ProductionSnapshotHeader ReadSnapshotHeader(TableEntity row)
-    {
-        if (row.ContainsKey("Json"))
-        {
-            using var json = JsonDocument.Parse((string)row["Json"]);
-            if (ParseProtocol(json.RootElement.GetProperty("SchemaVersion").GetString()) == SnapshotProtocol.V3)
-            {
-                var current = Database.Data<ProductionSnapshotHeaderV3>(row);
-                return new(current.SchemaVersion, current.Destination, current.OrderName,
-                    current.OrderDate, null, current.StartedAtUtc);
-            }
-            return Database.Data<ProductionSnapshotHeader>(row);
-        }
-        var due = (string)row["DueDate"];
-        return new((string)row["SchemaVersion"], (string)row["Destination"], (string)row["OrderName"],
-            DateOnly.Parse((string)row["OrderDate"]), due == "" ? null : DateOnly.Parse(due),
-            (DateTimeOffset)row["StartedAtUtc"]);
-    }
-
     private static long SumRequired(IEnumerable<SnapshotComponent> components) =>
         components.Aggregate(0L, (total, component) => checked(total + component.TotalRequired));
 
-    private enum SnapshotProtocol { V1, V2, V3 }
-
-    private static SnapshotProtocol ParseProtocol(string? version) => version switch
-    {
-        "1.0" => SnapshotProtocol.V1,
-        "2.0" => SnapshotProtocol.V2,
-        "3.0" => SnapshotProtocol.V3,
-        _ => throw new InvalidOperationException($"Unsupported production snapshot version: {version}.")
-    };
-
     private static OrderRecord MakeOrder(Guid id, OrderInput input, IReadOnlyDictionary<Guid, long> demand) =>
         new(id, input.Name.Trim(), input.Description.Trim(), input.OrderDate,
-            "Reserved", null, input.Boards, demand.ToDictionary(), DateTimeOffset.UtcNow);
+            OrderStatus.Reserved, null, input.Boards, demand.ToDictionary(), DateTimeOffset.UtcNow);
 
     private static void Validate(OrderInput input)
     {

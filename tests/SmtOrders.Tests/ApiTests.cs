@@ -179,6 +179,9 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var order = await created.Content.ReadFromJsonAsync<OrderView>();
         Assert.NotNull(order);
+        Assert.Equal(OrderStatus.Reserved, order.Status);
+        using (var createdJson = JsonDocument.Parse(await created.Content.ReadAsByteArrayAsync()))
+            Assert.Equal("Reserved", createdJson.RootElement.GetProperty("status").GetString());
         var reserved = await _client.GetFromJsonAsync<ComponentView>($"/api/components/{component.Id}");
         Assert.Equal(6, reserved?.ReservedStock);
         Assert.Equal(4, reserved?.AvailableStock);
@@ -188,6 +191,8 @@ public sealed class ApiTests : IAsyncLifetime
         var consumed = await _client.GetFromJsonAsync<ComponentView>($"/api/components/{component.Id}");
         Assert.Equal(4, consumed?.PhysicalStock);
         Assert.Equal(0, consumed?.ReservedStock);
+        var started = await _client.GetFromJsonAsync<OrderView>($"/api/orders/{order.Id}");
+        Assert.Equal(OrderStatus.Started, started?.Status);
         var catalogEdit = await _client.PutAsJsonAsync($"/api/components/{component.Id}",
             new ComponentInput("C-1", "Part", "Updated after start", 500));
         Assert.Equal(HttpStatusCode.OK, catalogEdit.StatusCode);
@@ -330,9 +335,9 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.False(foundJson.RootElement.TryGetProperty("dueDate", out _));
 
         var download = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
-        Assert.Equal("application/vnd.smt-production.v3+json", download.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("application/vnd.smt-production.v1+json", download.Content.Headers.ContentType?.MediaType);
         using var handoffJson = JsonDocument.Parse(await download.Content.ReadAsByteArrayAsync());
-        Assert.Equal("3.0", handoffJson.RootElement.GetProperty("schemaVersion").GetString());
+        Assert.Equal("1.0", handoffJson.RootElement.GetProperty("schemaVersion").GetString());
         Assert.False(handoffJson.RootElement.TryGetProperty("dueDate", out _));
 
         var table = _app.Services.GetRequiredService<TableClient>();
@@ -492,10 +497,10 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Contains(found!, x => x.Id == order.Id);
         var response = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal("application/vnd.smt-production.v3+json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("application/vnd.smt-production.v1+json", response.Content.Headers.ContentType?.MediaType);
         using var document = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync());
         var root = document.RootElement;
-        Assert.Equal("3.0", root.GetProperty("schemaVersion").GetString());
+        Assert.Equal("1.0", root.GetProperty("schemaVersion").GetString());
         Assert.False(root.TryGetProperty("dueDate", out _));
         Assert.Equal("SMT-LINE-1", root.GetProperty("destination").GetString());
         Assert.Equal(order.Id.ToString(), root.GetProperty("orderId").GetString());
@@ -519,94 +524,10 @@ public sealed class ApiTests : IAsyncLifetime
         foreach (var oldField in new[] { "SchemaVersion", "Destination", "OrderName", "OrderDate", "DueDate", "StartedAtUtc" })
             Assert.False(header.ContainsKey(oldField));
         using var storedHeader = JsonDocument.Parse((string)header["Json"]);
-        Assert.Equal("3.0", storedHeader.RootElement.GetProperty("SchemaVersion").GetString());
+        Assert.Equal("1.0", storedHeader.RootElement.GetProperty("SchemaVersion").GetString());
         Assert.False(storedHeader.RootElement.TryGetProperty("DueDate", out _));
         Assert.Equal(HttpStatusCode.Conflict,
             (await _client.PutAsJsonAsync($"/api/orders/{order.Id}", input)).StatusCode);
-    }
-
-    [Theory]
-    [InlineData("1.0")]
-    [InlineData("2.0")]
-    public async Task Existing_column_based_snapshot_headers_remain_downloadable(string schemaVersion)
-    {
-        Authenticate();
-        var component = await CreateComponent("LEGACY-HANDOFF", 10);
-        var board = await CreateBoard(component.Id);
-        var orderResponse = await _client.PostAsJsonAsync("/api/orders", new OrderInput("Legacy", "Retry",
-            new DateOnly(2026, 9, 24), [new(board.Id, 1, 2)]));
-        var order = (await orderResponse.Content.ReadFromJsonAsync<OrderView>())!;
-        var started = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
-        started.EnsureSuccessStatusCode();
-        var newHandoff = (await started.Content.ReadFromJsonAsync<ProductionHandoff>())!;
-
-        // Simulate a snapshot header written before headers moved into the Json field.
-        var table = _app.Services.GetRequiredService<TableClient>();
-        var header = (await table.GetEntityAsync<TableEntity>(Database.Partition, $"S:{order.Id:N}")).Value;
-        var oldHeader = new TableEntity(Database.Partition, header.RowKey)
-        {
-            ["SchemaVersion"] = schemaVersion, ["Destination"] = newHandoff.Destination,
-            ["OrderName"] = newHandoff.OrderName, ["OrderDate"] = newHandoff.OrderDate.ToString("yyyy-MM-dd"),
-            ["DueDate"] = "2026-09-30", ["StartedAtUtc"] = newHandoff.ProductionStartedAtUtc
-        };
-        await table.UpdateEntityAsync(oldHeader, header.ETag, TableUpdateMode.Replace);
-
-        var first = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
-        Assert.Equal($"application/vnd.smt-production.v{schemaVersion[0]}+json",
-            first.Content.Headers.ContentType?.MediaType);
-        var bytes = await first.Content.ReadAsByteArrayAsync();
-        using var document = JsonDocument.Parse(bytes);
-        var root = document.RootElement;
-        Assert.Equal(schemaVersion, root.GetProperty("schemaVersion").GetString());
-        Assert.Equal("2026-09-30", root.GetProperty("dueDate").GetString());
-        var line = root.GetProperty("boards")[0];
-        var boardComponent = line.GetProperty("components")[0];
-        if (schemaVersion == "1.0")
-        {
-            Assert.Equal($"{board.Id:N}/r1", line.GetProperty("placementProgramId").GetString());
-            Assert.Equal(6, boardComponent.GetProperty("totalRequired").GetInt64());
-            Assert.False(boardComponent.TryGetProperty("componentId", out _));
-            Assert.False(root.GetProperty("materials")[0].TryGetProperty("componentId", out _));
-        }
-        else
-        {
-            Assert.False(line.TryGetProperty("placementProgramId", out _));
-            Assert.Equal(component.Id.ToString(), boardComponent.GetProperty("componentId").GetString());
-            Assert.False(boardComponent.TryGetProperty("totalRequired", out _));
-        }
-
-        var retry = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
-        Assert.Equal(bytes, await retry.Content.ReadAsByteArrayAsync());
-    }
-
-    [Fact]
-    public async Task Existing_version_two_json_snapshot_preserves_its_due_date()
-    {
-        Authenticate();
-        var component = await CreateComponent("V2-JSON", 10);
-        var board = await CreateBoard(component.Id);
-        var created = await _client.PostAsJsonAsync("/api/orders", new OrderInput("Older handoff", "V2 header",
-            new DateOnly(2026, 9, 25), [new(board.Id, 1, 1)]));
-        var order = (await created.Content.ReadFromJsonAsync<OrderView>())!;
-        var started = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
-        var current = (await started.Content.ReadFromJsonAsync<ProductionHandoff>())!;
-
-        var table = _app.Services.GetRequiredService<TableClient>();
-        var header = (await table.GetEntityAsync<TableEntity>(Database.Partition, $"S:{order.Id:N}")).Value;
-        header["Json"] = JsonSerializer.Serialize(new
-        {
-            SchemaVersion = "2.0", current.Destination, current.OrderName, current.OrderDate,
-            DueDate = new DateOnly(2026, 9, 30), StartedAtUtc = current.ProductionStartedAtUtc
-        });
-        await table.UpdateEntityAsync(header, header.ETag, TableUpdateMode.Replace);
-
-        var first = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
-        Assert.Equal("application/vnd.smt-production.v2+json", first.Content.Headers.ContentType?.MediaType);
-        var bytes = await first.Content.ReadAsByteArrayAsync();
-        using var json = JsonDocument.Parse(bytes);
-        Assert.Equal("2026-09-30", json.RootElement.GetProperty("dueDate").GetString());
-        Assert.Equal(bytes, await (await _client.PostAsync($"/api/orders/{order.Id}/download", null))
-            .Content.ReadAsByteArrayAsync());
     }
 
     [Fact]

@@ -5,6 +5,8 @@ using Azure.Data.Tables;
 
 namespace SmtOrders.Api;
 
+internal enum PartNumberIndex { Component, Board }
+
 // All demo data shares a partition. Every write also replaces this version row with
 // its ETag, so a batch planned from stale reads cannot commit after another writer.
 public sealed class Database(TableClient table)
@@ -150,9 +152,6 @@ public sealed class Database(TableClient table)
         var key = row.RowKey;
         var prefix = SnapshotBoardPrefix(orderId);
         if (!key.StartsWith(prefix, StringComparison.Ordinal)) throw new InvalidOperationException($"Unexpected RowKey: {key}");
-        var suffix = key[prefix.Length..];
-        if (!suffix.Contains(':') && row.TryGetValue("Revision", out var legacyRevision))
-            return (Guid.ParseExact(suffix, "N"), (int)legacyRevision);
         return ParseRevision(key, prefix);
     }
     internal static string SnapshotComponentPrefix(TableEntity boardRow, Guid orderId)
@@ -179,8 +178,17 @@ public sealed class Database(TableClient table)
         return (Guid.ParseExact(suffix[..separator], "N"),
             int.Parse(suffix[(separator + 1)..], NumberStyles.None, CultureInfo.InvariantCulture));
     }
-    public static string PartKey(string type, string part) => type + Convert.ToHexString(
-        System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(part.Trim().ToUpperInvariant())));
+    internal static string PartKey(PartNumberIndex index, string part)
+    {
+        var prefix = index switch
+        {
+            PartNumberIndex.Component => "CP:",
+            PartNumberIndex.Board => "BP:",
+            _ => throw new ArgumentOutOfRangeException(nameof(index))
+        };
+        return prefix + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(part.Trim().ToUpperInvariant())));
+    }
 
     public static void Required(string? value, string field)
     {

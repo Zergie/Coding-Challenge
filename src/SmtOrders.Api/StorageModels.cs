@@ -13,7 +13,7 @@ internal sealed record BoardRecord([property: JsonIgnore] Guid Id, string PartNu
 internal sealed record BoardRevisionRecord([property: JsonIgnore] Guid BoardId, [property: JsonIgnore] int Revision, string Name, string Description,
     decimal LengthMm, decimal WidthMm, IReadOnlyList<RecipeInput> Recipe);
 internal sealed record OrderRecord([property: JsonIgnore] Guid Id, string Name, string Description, DateOnly OrderDate,
-    string Status, DateTimeOffset? StartedAtUtc, IReadOnlyList<OrderLineInput> Boards,
+    OrderStatus Status, DateTimeOffset? StartedAtUtc, IReadOnlyList<OrderLineInput> Boards,
     Dictionary<Guid, long> Demand, DateTimeOffset CreatedAtUtc)
 {
     public OrderView View() => new(Id, Name, Description, OrderDate, Status, StartedAtUtc,
@@ -22,6 +22,4 @@ internal sealed record OrderRecord([property: JsonIgnore] Guid Id, string Name, 
 }
 
 internal sealed record ProductionSnapshotHeader(string SchemaVersion, string Destination, string OrderName,
-    DateOnly OrderDate, DateOnly? DueDate, DateTimeOffset StartedAtUtc);
-internal sealed record ProductionSnapshotHeaderV3(string SchemaVersion, string Destination, string OrderName,
     DateOnly OrderDate, DateTimeOffset StartedAtUtc);

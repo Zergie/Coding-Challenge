@@ -18,8 +18,10 @@ public sealed record OrderLineInput(Guid BoardId, int Revision, long BuildQuanti
 public sealed record OrderInput(string Name, string Description, DateOnly OrderDate,
     IReadOnlyList<OrderLineInput> Boards);
 public sealed record OrderLineView(Guid BoardId, int Revision, long BuildQuantity);
+[JsonConverter(typeof(JsonStringEnumConverter<OrderStatus>))]
+public enum OrderStatus { Reserved, Started }
 public sealed record OrderView(Guid Id, string Name, string Description, DateOnly OrderDate,
-    string Status, DateTimeOffset? StartedAtUtc, IReadOnlyList<OrderLineView> Boards);
+    OrderStatus Status, DateTimeOffset? StartedAtUtc, IReadOnlyList<OrderLineView> Boards);
 
 public sealed record HandoffComponent(Guid ComponentId, string PartNumber, long QuantityPerBoard);
 public sealed record HandoffBoard(Guid BoardId, string PartNumber, int Revision, decimal LengthMm,
@@ -27,20 +29,11 @@ public sealed record HandoffBoard(Guid BoardId, string PartNumber, int Revision,
 public sealed record HandoffMaterial(Guid ComponentId, string PartNumber, long TotalRequired);
 public sealed record ProductionHandoff(string SchemaVersion, string Destination, Guid OrderId, string OrderName,
     DateOnly OrderDate, DateTimeOffset ProductionStartedAtUtc,
-    IReadOnlyList<HandoffBoard> Boards, IReadOnlyList<HandoffMaterial> Materials);
-public sealed record ProductionDownload(object Body, string ContentType);
-
-public sealed record LegacyProductionHandoffV2(string SchemaVersion, string Destination, Guid OrderId, string OrderName,
-    DateOnly OrderDate, DateOnly? DueDate, DateTimeOffset ProductionStartedAtUtc,
-    IReadOnlyList<HandoffBoard> Boards, IReadOnlyList<HandoffMaterial> Materials);
-
-public sealed record LegacyHandoffComponent(string PartNumber, long QuantityPerBoard, long TotalRequired);
-public sealed record LegacyHandoffBoard(Guid BoardId, string PartNumber, int Revision, decimal LengthMm,
-    decimal WidthMm, long BuildQuantity, string PlacementProgramId, IReadOnlyList<LegacyHandoffComponent> Components);
-public sealed record LegacyHandoffMaterial(string PartNumber, long TotalRequired);
-public sealed record LegacyProductionHandoff(string SchemaVersion, string Destination, Guid OrderId, string OrderName,
-    DateOnly OrderDate, DateOnly? DueDate, DateTimeOffset ProductionStartedAtUtc,
-    IReadOnlyList<LegacyHandoffBoard> Boards, IReadOnlyList<LegacyHandoffMaterial> Materials);
+    IReadOnlyList<HandoffBoard> Boards, IReadOnlyList<HandoffMaterial> Materials)
+{
+    public const string CurrentSchemaVersion = "1.0";
+    public const string MediaType = "application/vnd.smt-production.v1+json";
+}
 
 public sealed class DomainException(int status, string code, string message) : Exception(message)
 {

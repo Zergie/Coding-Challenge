@@ -12,7 +12,7 @@ public sealed class BoardService(Database db, ILogger<BoardService> log)
         var result = await db.Write(async changes =>
         {
             await CheckComponents(input.Recipe);
-            var index = Database.PartKey("BP:", part);
+            var index = Database.PartKey(PartNumberIndex.Board, part);
             if (await db.Get(index) is not null) throw Database.Duplicate();
             var board = new BoardRecord(id, part, 1);
             var revision = MakeRevision(id, 1, new(input.Name, input.Description, input.LengthMm, input.WidthMm, input.Recipe));
@@ -89,7 +89,7 @@ public sealed class BoardService(Database db, ILogger<BoardService> log)
                 if (Database.Order(orderRow).Boards.Any(x => x.BoardId == id)) throw Database.Referenced("Board");
             var board = Database.Board(row);
             changes.Delete(row);
-            changes.Delete((await db.Get(Database.PartKey("BP:", board.PartNumber)))!);
+            changes.Delete((await db.Get(Database.PartKey(PartNumberIndex.Board, board.PartNumber)))!);
             foreach (var revision in await db.List(Database.BoardRevisionPrefix(id))) changes.Delete(revision);
             return true;
         });

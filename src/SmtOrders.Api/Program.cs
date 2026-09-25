@@ -181,7 +181,7 @@ api.MapPost("/orders/{id:guid}/download", async (Guid id, OrderService service, 
 {
     context.Response.Headers.CacheControl = "no-store";
     var download = await service.Download(id);
-    return Results.Json(download.Body, contentType: download.ContentType);
+    return Results.Json(download, contentType: ProductionHandoff.MediaType);
 });
 
 app.Run();

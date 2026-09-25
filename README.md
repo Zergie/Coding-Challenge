@@ -139,7 +139,7 @@ Use real IDs returned by the API for Board and Order requests. Invalid input ret
 
 ## Production protocol
 
-New production downloads use media type `application/vnd.smt-production.v3+json` and `schemaVersion` `3.0`. This planning and kitting handoff for `SMT-LINE-1` contains the Order date and UTC start time, ordered Board lines with dimensions and build quantities, per Board Component IDs and quantities per Board, and aggregate materials with Component IDs and total required quantities. The actual placement program is managed outside this API; the JSON contains no placement coordinates. Orders started under protocol v1 or v2 keep returning their original media type and fields on retry, including a due date when one was stored, so their download bytes remain stable.
+Production downloads use media type `application/vnd.smt-production.v1+json` and `schemaVersion` `1.0`. This planning and kitting handoff for `SMT-LINE-1` contains the Order date and UTC start time, ordered Board lines with dimensions and build quantities, per Board Component IDs and quantities per Board, and aggregate materials with Component IDs and total required quantities. The actual placement program is managed outside this API; the JSON contains no placement coordinates. A second download of a started Order returns the same snapshot bytes.
 
 ## Limits
 

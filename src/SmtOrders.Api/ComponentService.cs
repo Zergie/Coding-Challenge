@@ -11,7 +11,7 @@ public sealed class ComponentService(Database db, BoardService boards, ILogger<C
         var part = input.PartNumber.Trim();
         var result = await db.Write(async changes =>
         {
-            var indexKey = Database.PartKey("CP:", part);
+            var indexKey = Database.PartKey(PartNumberIndex.Component, part);
             if (await db.Get(indexKey) is not null) throw Database.Duplicate();
             var record = new ComponentRecord(id, part, input.Name.Trim(), input.Description.Trim(), input.PhysicalStock, 0);
             changes.Add(Database.ComponentRow(record));
@@ -46,11 +46,11 @@ public sealed class ComponentService(Database db, BoardService boards, ILogger<C
             if (part != old.PartNumber)
             {
                 if (await boards.ReferencesComponent(id)) throw Database.Referenced("Component part number");
-                var newIndex = Database.PartKey("CP:", part);
-                if (newIndex != Database.PartKey("CP:", old.PartNumber))
+                var newIndex = Database.PartKey(PartNumberIndex.Component, part);
+                if (newIndex != Database.PartKey(PartNumberIndex.Component, old.PartNumber))
                 {
                     if (await db.Get(newIndex) is not null) throw Database.Duplicate();
-                    changes.Delete((await db.Get(Database.PartKey("CP:", old.PartNumber)))!);
+                    changes.Delete((await db.Get(Database.PartKey(PartNumberIndex.Component, old.PartNumber)))!);
                     changes.Add(Database.Row(newIndex, id));
                 }
             }
@@ -72,7 +72,7 @@ public sealed class ComponentService(Database db, BoardService boards, ILogger<C
             var component = Database.Component(row);
             if (component.ReservedStock != 0) throw Database.Referenced("Component");
             changes.Delete(row);
-            changes.Delete((await db.Get(Database.PartKey("CP:", component.PartNumber)))!);
+            changes.Delete((await db.Get(Database.PartKey(PartNumberIndex.Component, component.PartNumber)))!);
             return true;
         });
         log.LogInformation("Component {ComponentId} deleted", id);
