@@ -210,8 +210,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
                     new LegacyHandoffComponent(component.PartNumber, component.QuantityPerBoard,
                         component.TotalRequired)).ToList())).ToList();
             var legacyMaterials = allComponents.GroupBy(x => x.PartNumber, StringComparer.Ordinal)
-                .Select(group => new LegacyHandoffMaterial(group.Key,
-                    group.Aggregate(0L, (total, component) => checked(total + component.TotalRequired))))
+                .Select(group => new LegacyHandoffMaterial(group.Key, SumRequired(group)))
                 .OrderBy(x => x.PartNumber).ToList();
             return new(new LegacyProductionHandoff(schemaVersion, destination, id, orderName, orderDate,
                 dueDate, startedAt, legacyBoards, legacyMaterials), "application/vnd.smt-production.v1+json");
@@ -221,8 +220,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
             board.Components.Select(component => new HandoffComponent(component.ComponentId,
                 component.PartNumber, component.QuantityPerBoard)).ToList())).ToList();
         var currentMaterials = allComponents.GroupBy(x => x.ComponentId)
-            .Select(group => new HandoffMaterial(group.Key, group.First().PartNumber,
-                group.Aggregate(0L, (total, component) => checked(total + component.TotalRequired))))
+            .Select(group => new HandoffMaterial(group.Key, group.First().PartNumber, SumRequired(group)))
             .OrderBy(x => x.PartNumber).ThenBy(x => x.ComponentId).ToList();
         return new(new ProductionHandoff(schemaVersion, destination, id, orderName, orderDate,
             dueDate, startedAt, currentBoards, currentMaterials), "application/vnd.smt-production.v2+json");
@@ -231,6 +229,9 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
     private sealed record SnapshotComponent(Guid ComponentId, string PartNumber, long QuantityPerBoard, long TotalRequired);
     private sealed record SnapshotBoard(Guid BoardId, string PartNumber, int Revision, decimal LengthMm,
         decimal WidthMm, long BuildQuantity, IReadOnlyList<SnapshotComponent> Components);
+
+    private static long SumRequired(IEnumerable<SnapshotComponent> components) =>
+        components.Aggregate(0L, (total, component) => checked(total + component.TotalRequired));
 
     private static OrderRecord MakeOrder(Guid id, OrderInput input, IReadOnlyDictionary<Guid, long> demand) =>
         new(id, input.Name.Trim(), input.Description.Trim(), input.OrderDate, input.DueDate,
