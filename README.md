@@ -110,7 +110,7 @@ Allow time for role assignment propagation before the app first accesses Table S
 
 ## API walkthrough
 
-Authorize in Swagger and list `/api/components`, `/api/boards`, and `/api/orders`: each starts as `[]`. Create Components with physical stock, create a Board with a recipe using their returned IDs, then create an Order using the Board ID and revision. Use the returned Order ID for `POST /api/orders/{id}/download`. Repeat the call to verify the same handoff bytes and a single stock deduction. Editing or deleting that started Order returns `order_started` (`409`). Search endpoints use `?q=text` against name or description, and empty results are `[]`.
+Authorize in Swagger and list `/api/components`, `/api/boards`, and `/api/orders`: each starts as `[]`. Create Components with physical stock, create a Board with a recipe using their returned IDs, then use `GET /api/boards/{id}/revisions` to list all its revisions in order. Create an Order using the Board ID and revision. Use the returned Order ID for `POST /api/orders/{id}/download`. Repeat the call to verify the same handoff bytes and a single stock deduction. Editing or deleting that started Order returns `order_started` (`409`). Search endpoints use `?q=text` against name or description, and empty results are `[]`.
 
 Example requests:
 

@@ -175,6 +175,31 @@ public sealed class ApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Board_revision_list_returns_each_recipe_in_revision_order()
+    {
+        Authenticate();
+        var component = await CreateComponent("REVISION-LIST", 20);
+        var board = await CreateBoard(component.Id);
+        var second = await _client.PutAsJsonAsync($"/api/boards/{board.Id}",
+            new BoardEdit("Second", "Recipe two", 100, 50, [new RecipeInput(component.Id, 1)]));
+        var third = await _client.PutAsJsonAsync($"/api/boards/{board.Id}",
+            new BoardEdit("Third", "Recipe three", 100, 50, [new RecipeInput(component.Id, 2)]));
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, third.StatusCode);
+
+        var response = await _client.GetAsync($"/api/boards/{board.Id}/revisions");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var revisions = (await response.Content.ReadFromJsonAsync<List<BoardView>>())!;
+        Assert.Equal([1, 2, 3], revisions.Select(x => x.Revision));
+        Assert.All(revisions, revision => Assert.Equal(board.Id, revision.Id));
+        Assert.Equal([3, 1, 2], revisions.Select(x => x.Recipe.Single().QuantityPerBoard));
+
+        var missing = await _client.GetAsync($"/api/boards/{Guid.NewGuid()}/revisions");
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        Assert.Equal("not_found", (await missing.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+    }
+
+    [Fact]
     public async Task Order_can_reserve_two_revisions_of_the_same_board()
     {
         Authenticate();

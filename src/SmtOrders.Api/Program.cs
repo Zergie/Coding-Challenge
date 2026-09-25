@@ -135,6 +135,8 @@ api.MapPost("/boards", async (BoardInput input, CatalogService service) =>
 api.MapGet("/boards", (string? q, CatalogService service) => service.SearchBoards(q));
 api.MapGet("/boards/{id:guid}", async (Guid id, CatalogService service) =>
     await service.FindBoard(id) is { } result ? Results.Ok(result) : Results.NotFound(new { code = "not_found", message = "Board was not found." }));
+api.MapGet("/boards/{id:guid}/revisions", async (Guid id, CatalogService service) =>
+    await service.ListBoardRevisions(id) is { } result ? Results.Ok(result) : Results.NotFound(new { code = "not_found", message = "Board was not found." }));
 api.MapGet("/boards/{id:guid}/revisions/{revision:int}", async (Guid id, int revision, CatalogService service) =>
     await service.FindBoard(id, revision) is { } result ? Results.Ok(result) : Results.NotFound(new { code = "not_found", message = "Board revision was not found." }));
 api.MapPut("/boards/{id:guid}", (Guid id, BoardEdit input, CatalogService service) => service.ReviseBoard(id, input));

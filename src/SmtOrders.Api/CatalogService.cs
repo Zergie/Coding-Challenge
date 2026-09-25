@@ -105,6 +105,17 @@ public sealed class CatalogService(Database db, ILogger<CatalogService> log)
         return await View(board, Database.Data<BoardRevisionRecord>(revisionRow));
     });
 
+    public Task<IReadOnlyList<BoardView>?> ListBoardRevisions(Guid id) => db.ReadStable<IReadOnlyList<BoardView>?>(async () =>
+    {
+        if (await db.Get("B:" + Database.Id(id)) is not { } boardRow) return null;
+        var board = Database.Data<BoardRecord>(boardRow);
+        var revisions = new List<BoardView>();
+        foreach (var row in await db.List("BR:" + Database.Id(id) + ":"))
+            revisions.Add(await View(board, Database.Data<BoardRevisionRecord>(row)));
+        if (revisions.Count != board.LatestRevision) throw new StaleReadException();
+        return revisions.OrderBy(x => x.Revision).ToList();
+    });
+
     public Task<IReadOnlyList<BoardView>> SearchBoards(string? query) => db.ReadStable<IReadOnlyList<BoardView>>(async () =>
     {
         var results = new List<BoardView>();
