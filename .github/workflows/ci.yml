@@ -2,6 +2,7 @@ name: Build, test, deploy
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -31,13 +32,13 @@ jobs:
       - run: dotnet test SmtOrders.sln --configuration Release --no-build
       - run: dotnet publish src/SmtOrders.Api/SmtOrders.Api.csproj --configuration Release --no-build --output publish
       - uses: actions/upload-artifact@v4
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         with:
           name: api
           path: publish/
 
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.AZURE_WEBAPP_NAME != ''
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.AZURE_WEBAPP_NAME != ''
     needs: test
     runs-on: ubuntu-latest
     permissions:
