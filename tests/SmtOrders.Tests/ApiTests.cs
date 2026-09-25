@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Npgsql;
+using Azure.Data.Tables;
 using SmtOrders.Api;
 
 namespace SmtOrders.Tests;
@@ -18,14 +18,16 @@ public sealed class ApiTests : IAsyncLifetime
 {
     private WebApplicationFactory<Program> _app = null!;
     private HttpClient _client = null!;
-    private readonly string _connection = Environment.GetEnvironmentVariable("SMT_TEST_POSTGRES")
-        ?? "Host=localhost;Port=5432;Database=smt_test;Username=smt;Password=smt";
+    private readonly string _connection = Environment.GetEnvironmentVariable("SMT_TEST_TABLES")
+        ?? "UseDevelopmentStorage=true";
+    private readonly string _tableName = "SmtTest" + Guid.NewGuid().ToString("N")[..16];
 
-    public async Task InitializeAsync()
+    public Task InitializeAsync()
     {
         _app = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
-            builder.UseSetting("ConnectionStrings:Postgres", _connection);
+            builder.UseSetting("Storage:ConnectionString", _connection);
+            builder.UseSetting("Storage:TableName", _tableName);
             builder.UseSetting("Entra:TenantId", "00000000-0000-0000-0000-000000000000");
             builder.UseSetting("Entra:Audience", "api://test");
             builder.UseSetting("Entra:AppIdUri", "api://test");
@@ -36,20 +38,14 @@ public sealed class ApiTests : IAsyncLifetime
             });
         });
         _client = _app.CreateClient();
-        await using var connection = new NpgsqlConnection(_connection);
-        await connection.OpenAsync();
-        await using var command = new NpgsqlCommand("""
-            truncate snapshot_components,snapshot_boards,production_snapshots,reservations,
-              order_lines,orders,board_recipe,board_revisions,boards,components cascade
-            """, connection);
-        await command.ExecuteNonQueryAsync();
+        return Task.CompletedTask;
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
         _client.Dispose();
         _app.Dispose();
-        return Task.CompletedTask;
+        await new TableClient(_connection, _tableName).DeleteAsync();
     }
 
     [Fact]
@@ -212,6 +208,24 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal(6, root.GetProperty("materials")[0].GetProperty("totalRequired").GetInt64());
         Assert.Equal(HttpStatusCode.Conflict,
             (await _client.PutAsJsonAsync($"/api/orders/{order.Id}", input)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Order_that_cannot_fit_the_production_batch_is_rejected_before_reservation()
+    {
+        Authenticate();
+        var parts = new List<ComponentView>();
+        for (var i = 0; i < 49; i++) parts.Add(await CreateComponent($"BULK-{i}", 10));
+        var boardResponse = await _client.PostAsJsonAsync("/api/boards", new BoardInput("BULK-BOARD", "Bulk", "Batch bound",
+            100, 50, parts.Select(x => new RecipeInput(x.Id, 1)).ToList()));
+        boardResponse.EnsureSuccessStatusCode();
+        var board = (await boardResponse.Content.ReadFromJsonAsync<BoardView>())!;
+        var response = await _client.PostAsJsonAsync("/api/orders", new OrderInput("Too large", "Must reject early",
+            new DateOnly(2026, 9, 24), null, [new(board.Id, 1, 1)]));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("batch_limit", (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+        foreach (var part in parts)
+            Assert.Equal(0, (await _client.GetFromJsonAsync<ComponentView>($"/api/components/{part.Id}"))!.ReservedStock);
     }
 
     [Fact]

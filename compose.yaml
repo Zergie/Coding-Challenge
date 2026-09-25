@@ -1,33 +1,30 @@
 services:
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_DB: smt
-      POSTGRES_USER: smt
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.37.0
+    command: azurite-table --tableHost 0.0.0.0 --location /data
     ports:
-      - "5432:5432"
+      - "10002:10002"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
-      - ./docker/create-test-db.sql:/docker-entrypoint-initdb.d/create-test-db.sql:ro
+      - azurite-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U smt -d smt"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      test: ["CMD", "node", "-e", "require('net').connect(10002,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
   api:
     build: .
     depends_on:
-      db:
+      azurite:
         condition: service_healthy
     ports:
       - "8080:8080"
     environment:
-      ConnectionStrings__Postgres: Host=db;Port=5432;Database=smt;Username=smt;Password=${POSTGRES_PASSWORD};SSL Mode=Disable
+      Storage__ConnectionString: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://azurite:10002/devstoreaccount1;"
+      Storage__TableName: SmtOrders
       Entra__TenantId: ${ENTRA_TENANT_ID:?Set ENTRA_TENANT_ID in .env}
       Entra__Audience: ${ENTRA_API_AUDIENCE:?Set ENTRA_API_AUDIENCE in .env}
       Entra__AppIdUri: ${ENTRA_APP_ID_URI:?Set ENTRA_APP_ID_URI in .env}
       Entra__BrowserClientId: ${ENTRA_BROWSER_CLIENT_ID:?Set ENTRA_BROWSER_CLIENT_ID in .env}
       Production__Destination: SMT-LINE-1
 volumes:
-  postgres-data:
+  azurite-data:

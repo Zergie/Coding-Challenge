@@ -10,24 +10,22 @@ jobs:
   test:
     runs-on: ubuntu-latest
     services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: smt
-          POSTGRES_PASSWORD: test-only-password
-          POSTGRES_DB: smt_test
+      azurite:
+        image: mcr.microsoft.com/azure-storage/azurite:3.37.0
         ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U smt -d smt_test"
-          --health-interval 5s --health-timeout 5s --health-retries 10
-    env:
-      SMT_TEST_POSTGRES: Host=localhost;Port=5432;Database=smt_test;Username=smt;Password=test-only-password
+          - 10002:10002
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+      - name: Wait for Azurite Table service
+        run: |
+          for i in {1..30}; do
+            if (echo > /dev/tcp/127.0.0.1/10002) 2>/dev/null; then exit 0; fi
+            sleep 1
+          done
+          exit 1
       - run: dotnet restore SmtOrders.sln
       - run: dotnet build SmtOrders.sln --configuration Release --no-restore
       - run: dotnet test SmtOrders.sln --configuration Release --no-build

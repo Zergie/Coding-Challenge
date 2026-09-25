@@ -1,15 +1,15 @@
 targetScope = 'resourceGroup'
 
-@description('Globally unique prefix for the App Service and PostgreSQL names.')
+@description('Globally unique lowercase prefix for the Web App and storage account.')
 param namePrefix string
-@description('Azure region checked in the pricing calculator before deployment.')
 param location string = resourceGroup().location
-@secure()
-param postgresPassword string
 param tenantId string
 param apiAudience string
 param appIdUri string
 param browserClientId string
+
+var storageName = 'smt${uniqueString(resourceGroup().id, namePrefix)}'
+var tableName = 'SmtOrders'
 
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   name: '${namePrefix}-plan'
@@ -25,56 +25,33 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   }
 }
 
-resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
-  name: '${namePrefix}-pg'
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: storageName
   location: location
-  sku: {
-    name: 'Standard_B1ms'
-    tier: 'Burstable'
-  }
+  kind: 'StorageV2'
+  sku: { name: 'Standard_LRS' }
   properties: {
-    administratorLogin: 'smtadmin'
-    administratorLoginPassword: postgresPassword
-    version: '16'
-    storage: {
-      storageSizeGB: 32
-      autoGrow: 'Disabled'
-    }
-    backup: {
-      backupRetentionDays: 7
-      geoRedundantBackup: 'Disabled'
-    }
-    highAvailability: {
-      mode: 'Disabled'
-    }
-    network: {
-      publicNetworkAccess: 'Enabled'
-    }
+    allowBlobPublicAccess: false
+    allowSharedKeyAccess: false
+    minimumTlsVersion: 'TLS1_2'
   }
 }
 
-resource azureServicesRule 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2024-08-01' = {
-  parent: postgres
-  name: 'AllowAzureServices'
-  properties: {
-    startIpAddress: '0.0.0.0'
-    endIpAddress: '0.0.0.0'
-  }
+resource tableService 'Microsoft.Storage/storageAccounts/tableServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
 }
 
-resource database 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
-  parent: postgres
-  name: 'smt'
-  properties: {
-    charset: 'UTF8'
-    collation: 'en_US.utf8'
-  }
+resource ordersTable 'Microsoft.Storage/storageAccounts/tableServices/tables@2023-05-01' = {
+  parent: tableService
+  name: tableName
 }
 
 resource site 'Microsoft.Web/sites@2024-04-01' = {
   name: '${namePrefix}-api'
   location: location
   kind: 'app'
+  identity: { type: 'SystemAssigned' }
   properties: {
     serverFarmId: plan.id
     httpsOnly: true
@@ -84,7 +61,8 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
       appSettings: [
-        { name: 'ConnectionStrings__Postgres', value: 'Host=${postgres.properties.fullyQualifiedDomainName};Port=5432;Database=smt;Username=smtadmin;Password=${postgresPassword};SSL Mode=Require' }
+        { name: 'Storage__TableServiceUri', value: 'https://${storage.name}.table.${environment().suffixes.storage}' }
+        { name: 'Storage__TableName', value: tableName }
         { name: 'Entra__TenantId', value: tenantId }
         { name: 'Entra__Audience', value: apiAudience }
         { name: 'Entra__AppIdUri', value: appIdUri }
@@ -95,5 +73,15 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
   }
 }
 
+resource tableRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storage.id, site.id, 'Storage Table Data Contributor')
+  scope: storage
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3')
+    principalId: site.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 output apiUrl string = 'https://${site.properties.defaultHostName}'
-output postgresHost string = postgres.properties.fullyQualifiedDomainName
+output tableEndpoint string = 'https://${storage.name}.table.${environment().suffixes.storage}'

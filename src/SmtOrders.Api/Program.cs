@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.OpenApi.Models;
-using Npgsql;
+using Azure.Data.Tables;
+using Azure.Identity;
 using Serilog;
 using SmtOrders.Api;
 
@@ -10,8 +11,9 @@ builder.Host.UseSerilog((context, services, logger) => logger
     .ReadFrom.Services(services)
     .WriteTo.Console());
 
-var connectionString = builder.Configuration.GetConnectionString("Postgres")
-    ?? throw new InvalidOperationException("ConnectionStrings:Postgres is required.");
+var tableName = builder.Configuration["Storage:TableName"] ?? "SmtOrders";
+var connectionString = builder.Configuration["Storage:ConnectionString"];
+var tableServiceUri = builder.Configuration["Storage:TableServiceUri"];
 var tenantId = builder.Configuration["Entra:TenantId"]
     ?? throw new InvalidOperationException("Entra:TenantId is required.");
 var apiAudience = builder.Configuration["Entra:Audience"]
@@ -23,7 +25,11 @@ var scope = builder.Configuration["Entra:Scope"]
 var browserClientId = builder.Configuration["Entra:BrowserClientId"]
     ?? throw new InvalidOperationException("Entra:BrowserClientId is required.");
 
-builder.Services.AddSingleton(NpgsqlDataSource.Create(connectionString));
+builder.Services.AddSingleton(_ => connectionString is not null
+    ? new TableClient(connectionString, tableName)
+    : new TableClient(new Uri(tableServiceUri ?? throw new InvalidOperationException(
+        "Storage:ConnectionString or Storage:TableServiceUri is required.")), tableName,
+        new DefaultAzureCredential()));
 builder.Services.AddSingleton<Database>();
 builder.Services.AddScoped<CatalogService>();
 builder.Services.AddScoped<OrderService>();
@@ -70,7 +76,12 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 var app = builder.Build();
-await Schema.Apply(app.Services.GetRequiredService<NpgsqlDataSource>());
+await app.Services.GetRequiredService<Database>().Initialize();
+if (args.Contains("--reset-demo"))
+{
+    await DemoSeed.Reset(app.Services);
+    return;
+}
 
 app.UseSerilogRequestLogging();
 app.UseExceptionHandler(handler => handler.Run(async context =>
@@ -81,8 +92,6 @@ app.UseExceptionHandler(handler => handler.Run(async context =>
     {
         DomainException domain => (domain.Status, domain.Code, domain.Message),
         BadHttpRequestException => (400, "invalid_input", "The request body or route is invalid."),
-        PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } => (409, "duplicate", "A record with this unique value already exists."),
-        PostgresException { SqlState: PostgresErrorCodes.ForeignKeyViolation } => (409, "referenced", "The record is referenced by another record."),
         _ => (500, "internal_error", "The request could not be completed.")
     };
     if (status >= 500) logger.LogError(error, "Request failed");
