@@ -85,7 +85,7 @@ The download media type is `application/vnd.smt-production.v1+json` and `schemaV
 
 ## Azure deployment preparation
 
-`infra/main.bicep` defines a Windows App Service F1 plan, a Standard LRS StorageV2 account, a Table, and a system assigned Web App identity with Storage Table Data Contributor on the storage account. The application uses `DefaultAzureCredential` and the Table service endpoint; no storage account key is placed in App Service settings. The region is West Europe (`westeurope`). Review the [cost note](docs/azure-cost-estimate.md) before provisioning.
+`infra/main.bicep` defines a Windows App Service F1 plan, a Standard LRS StorageV2 account, a Table, and a system assigned Web App identity with Storage Table Data Contributor on the storage account. The application uses `DefaultAzureCredential` and the Table service endpoint; no storage account key is placed in App Service settings. The region is West Europe (`westeurope`). The [retail estimate](docs/azure-cost-estimate.md) is about **$0.05/month** for 1 GB and 100,000 operations, below the $5/month soft target; check actual subscription pricing before provisioning.
 
 To deploy, sign in to Azure CLI, select the subscription, create a resource group, and apply the template:
 

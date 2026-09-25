@@ -1,7 +1,14 @@
-# Azure demo cost note
+# Azure demo cost estimate
 
-Region: **West Europe** (`westeurope`). The design uses App Service F1 and Azure Table Storage in a Standard LRS StorageV2 account. F1 has no hourly compute charge, while Table Storage bills for data stored and transactions. The service's scans and version row add transactions, so usage matters even for a small dataset. See [Azure Table Storage pricing](https://azure.microsoft.com/en-us/pricing/details/storage/tables/) and the [Azure Retail Prices API](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices).
+Checked **2026-09-25** for **West Europe** (`westeurope`) against Microsoft's [Azure Retail Prices API](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices). The design uses a Windows App Service F1 plan and Azure Table Storage in a Standard LRS StorageV2 account. [App Service F1 is free](https://azure.microsoft.com/en-us/pricing/details/app-service/windows/); it has resource quotas and no SLA.
 
-The earlier **$18.91/month PostgreSQL estimate no longer applies**. A precise West Europe Table Storage total depends on stored GB and request counts. Microsoft's live retail API returned a rate limit during this redesign, so no unverified dollar amount is presented. Before provisioning, use the Azure pricing calculator for West Europe, Standard LRS Table Storage, expected storage and transactions, and check the subscription's credits and billing terms. This is the cost gate against the **$5/month soft target**.
+| Resource or meter | Retail rate | Demo assumption | Monthly estimate |
+| --- | ---: | ---: | ---: |
+| App Service F1 | $0 | One app | $0 |
+| Standard LRS Tables, data stored | $0.045 per GB-month | 1 GB-month | $0.0450 |
+| Standard LRS Tables, read/write/list/scan/delete/batch operations | $0.00036 per 10,000 operations | 100,000 operations | $0.0036 |
+| **Total** | | | **$0.0486 (about $0.05)** |
 
-For a small demo estimate, enter 1 GB-month and 100,000 monthly Table operations. The application can use less storage but may use more operations because searches scan entities and each write reads and updates a version entity. Monitor the actual resource group's Cost Analysis if deployed. The template itself does not provision anything until applied.
+The estimate is **below the $5/month soft target** under these assumptions. The demo can use less than 1 GB, but catalog scans and the version row add Table operations. Actual charges depend on usage and the subscription's offer, credits, taxes, and any network transfer. Check the subscription's pricing and the Azure pricing calculator before provisioning; monitor resource group Cost Analysis afterward.
+
+To reproduce the Table rates, query `https://prices.azure.com/api/retail/prices` with the filter `armRegionName eq 'westeurope' and serviceName eq 'Storage' and contains(productName, 'Table')`, then select `skuName = Standard LRS` and `type = Consumption`. The returned `LRS Data Stored` rate was `$0.045` per `1 GB/Month`; all listed Standard LRS Table operation meters were `$0.00036` per `10K` at the check date. The earlier **$18.91/month PostgreSQL estimate no longer applies**.
