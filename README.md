@@ -71,7 +71,7 @@ GitHub Actions [builds, tests, and deploys](https://github.com/Zergie/Coding-Cha
 
 ### Set up a new deployment with Azure CLI
 
-These commands create a Windows App Service F1 plan, a Standard LRS StorageV2 account, and a Web App in West Europe (`westeurope`). The Web App uses its system assigned identity to access Table Storage. The API creates the `SmtOrders` Table and version record on first start, leaving Components, Boards, and Orders empty. No storage key or demo seed is needed. The [retail estimate](docs/azure-cost-estimate.md) is about **$0.05/month** for 1 GB and 100,000 operations, below the $5/month soft target; check actual subscription pricing before provisioning.
+These commands create a Windows App Service F1 plan, a Standard LRS StorageV2 account, and a Web App in West Europe (`westeurope`). The Web App uses its system assigned identity to access Table Storage. The API creates the `SmtOrders` Table and version record on first start, leaving Components, Boards, and Orders empty. No storage key or demo seed is needed. The [retail estimate](docs/azure-cost-estimate.md) is about **$0.05/month** for 1 GB and 100,000 operations; check actual subscription pricing before provisioning.
 
 First complete the [Entra registration](#entra-registration), including the new Web App's Swagger redirect URI. From the repository root in PowerShell, replace the placeholder values below. The Storage account name must be globally unique and contain only lowercase letters and digits; the Web App name must also be globally unique. Sign in with an account that can create resources and assign the Storage Table Data Contributor role.
 
