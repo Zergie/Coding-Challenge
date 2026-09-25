@@ -23,7 +23,15 @@ Components, Boards, revisions, Orders, unique part number indexes, and productio
 
 Physical stock counts whole pieces. Available stock is physical stock minus reservations. Board edits append revisions and existing Orders retain their selected revision. Order create and edit aggregate `build quantity × recipe quantity` and reserve that demand atomically with stock changes. A Reserved Order can be edited or deleted. Its first download marks it Started, consumes physical stock, releases reservations, and saves the snapshot in one transaction. Later downloads read that snapshot, yielding the same JSON bytes. Started Orders cannot be edited or deleted.
 
-## Local setup with Azurite
+## Entra registration
+
+1. Create a single tenant API app registration. Expose an Application ID URI such as `api://<api-client-id>` and the delegated scope `access_as_user`. Set `Entra__Audience` to the API token's `aud` value, `Entra__AppIdUri` to the URI, and `Entra__TenantId` to the tenant GUID.
+2. Create a separate single tenant SPA registration. Add Swagger redirect URIs `http://localhost:8080/swagger/oauth2-redirect.html` and `https://<app-name>.azurewebsites.net/swagger/oauth2-redirect.html`. Give it delegated permission for the API scope and grant consent as your tenant requires. Set `Entra__BrowserClientId` to its client ID. Swagger uses authorization code with PKCE.
+3. Use dedicated demo accounts for reviewers and share credentials privately. Authenticated users with the delegated scope have equal application permissions.
+
+For another localhost port, register its redirect URI. See [Microsoft's JWT bearer guidance](https://learn.microsoft.com/en-us/aspnet/core/security/authentication/configure-jwt-bearer-authentication).
+
+## Run locally with Azurite
 
 Requirements: Docker Compose and a Microsoft Entra tenant for reviewer sign in. Copy `.env.example` to `.env` and replace the placeholders. `.env` is Git ignored.
 
@@ -51,13 +59,54 @@ dotnet test SmtOrders.sln --no-build
 
 The tests use `UseDevelopmentStorage=true` by default. Set `SMT_TEST_TABLES` to another Azurite connection string if needed. Each integration test creates and deletes its own uniquely named Table. CI runs the same suite against an Azurite service.
 
-## Entra registration
+## Run on Azure
 
-1. Create a single tenant API app registration. Expose an Application ID URI such as `api://<api-client-id>` and the delegated scope `access_as_user`. Set `Entra__Audience` to the API token's `aud` value, `Entra__AppIdUri` to the URI, and `Entra__TenantId` to the tenant GUID.
-2. Create a separate single tenant SPA registration. Add Swagger redirect URIs `http://localhost:8080/swagger/oauth2-redirect.html` and `https://<app-name>.azurewebsites.net/swagger/oauth2-redirect.html`. Give it delegated permission for the API scope and grant consent as your tenant requires. Set `Entra__BrowserClientId` to its client ID. Swagger uses authorization code with PKCE.
-3. Use dedicated demo accounts for reviewers and share credentials privately. Authenticated users with the delegated scope have equal application permissions.
+### Current deployment
 
-For another localhost port, register its redirect URI. See [Microsoft's JWT bearer guidance](https://learn.microsoft.com/en-us/aspnet/core/security/authentication/configure-jwt-bearer-authentication).
+The shared reviewer API is deployed in West Europe at [smt-orders-e103ef-api.azurewebsites.net/swagger](https://smt-orders-e103ef-api.azurewebsites.net/swagger). Its resource group is `rg-smt-orders-demo` in subscription `85ed71b1-83f9-4a91-bf61-78fd20259323`. It uses Azure Table Storage and a managed identity. The Table starts empty of application records; reviewers create their own Components, Boards, and Orders through Swagger. Sign in using a tenant account allowed to consent to the delegated `access_as_user` scope. The public `/health` endpoint returns `200`; an anonymous `/api/components` request returns `401`.
+
+Verified on 2026-09-25 before clearing the Table: Entra sign-in, Component create/read/delete, Reserved Order creation, first production download, and an identical second download. The test Board consumed three resistors on the first download: physical stock changed from 1,000 to 997 and remained there on retry. All test records were subsequently cleared.
+
+GitHub Actions [builds, tests, and deploys](https://github.com/Zergie/Coding-Challenge/actions/workflows/ci.yml) passing `main` commits. Deployment uses an Entra application with a federated credential for this repository's immutable GitHub identity and the `main` branch. It has Website Contributor access scoped to this Web App. Repository secrets hold the deployment client, tenant, and subscription IDs; no long lived credential is stored. The Swagger SPA's delegated permission is subject to the tenant's consent policy.
+
+### Set up a new deployment with Azure CLI
+
+These commands create a Windows App Service F1 plan, a Standard LRS StorageV2 account, and a Web App in West Europe (`westeurope`). The Web App uses its system assigned identity to access Table Storage. The API creates the `SmtOrders` Table and version record on first start, leaving Components, Boards, and Orders empty. No storage key or demo seed is needed. The [retail estimate](docs/azure-cost-estimate.md) is about **$0.05/month** for 1 GB and 100,000 operations, below the $5/month soft target; check actual subscription pricing before provisioning.
+
+First complete the [Entra registration](#entra-registration), including the new Web App's Swagger redirect URI. From the repository root in PowerShell, replace the placeholder values below. The Storage account name must be globally unique and contain only lowercase letters and digits; the Web App name must also be globally unique. Sign in with an account that can create resources and assign the Storage Table Data Contributor role.
+
+```powershell
+$tenantId = 'YOUR_ENTRA_TENANT_ID'
+$subscriptionId = 'YOUR_SUBSCRIPTION_ID'
+$resourceGroup = 'YOUR_RESOURCE_GROUP'
+$plan = 'YOUR_APP_SERVICE_PLAN_NAME'
+$storageAccount = 'YOUR_UNIQUE_LOWERCASE_STORAGE_NAME'
+$webApp = 'YOUR_UNIQUE_WEB_APP_NAME'
+$apiAudience = 'YOUR_API_TOKEN_AUDIENCE'
+$appIdUri = 'api://YOUR_API_CLIENT_ID'
+$browserClientId = 'YOUR_BROWSER_CLIENT_ID'
+
+az login --tenant $tenantId
+az account set --subscription $subscriptionId
+az group create --name $resourceGroup --location westeurope
+az appservice plan create --name $plan --resource-group $resourceGroup --location westeurope --sku F1 --is-linux false
+az storage account create --name $storageAccount --resource-group $resourceGroup --location westeurope --kind StorageV2 --sku Standard_LRS --allow-blob-public-access false --allow-shared-key-access false --min-tls-version TLS1_2
+az webapp create --name $webApp --resource-group $resourceGroup --plan $plan --runtime 'DOTNETCORE:8.0'
+az webapp update --name $webApp --resource-group $resourceGroup --https-only true
+az webapp config set --name $webApp --resource-group $resourceGroup --use-32bit-worker-process true --ftps-state Disabled --min-tls-version 1.2
+
+$principalId = az webapp identity assign --name $webApp --resource-group $resourceGroup --query principalId --output tsv
+$storageId = az storage account show --name $storageAccount --resource-group $resourceGroup --query id --output tsv
+az role assignment create --assignee-object-id $principalId --assignee-principal-type ServicePrincipal --role 'Storage Table Data Contributor' --scope $storageId
+
+az webapp config appsettings set --name $webApp --resource-group $resourceGroup --settings "Storage__TableServiceUri=https://$($storageAccount).table.core.windows.net" 'Storage__TableName=SmtOrders' "Entra__TenantId=$tenantId" "Entra__Audience=$apiAudience" "Entra__AppIdUri=$appIdUri" "Entra__BrowserClientId=$browserClientId" 'Production__Destination=SMT-LINE-1'
+
+dotnet publish src/SmtOrders.Api/SmtOrders.Api.csproj --configuration Release --output .scratch/publish
+Compress-Archive -Path .scratch/publish/* -DestinationPath .scratch/api.zip -Force
+az webapp deploy --name $webApp --resource-group $resourceGroup --src-path .scratch/api.zip --type zip
+```
+
+Allow time for role assignment propagation before the app first accesses Table Storage. Open `https://<web-app-name>.azurewebsites.net/swagger`; verify `/health`, anonymous `401` from `/api/components`, Entra sign in, and the create-to-download path. The Table starts with no application records. The GitHub workflow deploys on a passing `main` push when `vars.AZURE_WEBAPP_NAME` is set; configure OIDC secrets and a federated credential before using it. [Azure's App Service deployment guide](https://learn.microsoft.com/en-us/azure/app-service/deploy-github-actions) covers that setup. Remove the resource group when review ends to stop storage charges.
 
 ## API walkthrough
 
@@ -82,34 +131,6 @@ Use real IDs returned by the API for Board and Order requests. Invalid input ret
 ## Production protocol
 
 The download media type is `application/vnd.smt-production.v1+json` and `schemaVersion` is `1.0`. It is a planning and kitting handoff for `SMT-LINE-1`. It contains Order dates and UTC start time, ordered Board lines with dimensions and build quantities, per Board Component requirements, and aggregate materials. `placementProgramId` is the Board ID plus revision. The actual placement program is managed outside this API; the JSON contains no placement coordinates.
-
-## Live Azure demo
-
-The shared reviewer API is deployed in West Europe at [smt-orders-e103ef-api.azurewebsites.net/swagger](https://smt-orders-e103ef-api.azurewebsites.net/swagger). Its resource group is `rg-smt-orders-demo` in subscription `85ed71b1-83f9-4a91-bf61-78fd20259323`. It uses Azure Table Storage and a managed identity. The Table starts empty of application records; reviewers create their own Components, Boards, and Orders through Swagger. Sign in using a tenant account allowed to consent to the delegated `access_as_user` scope. The public `/health` endpoint returns `200`; an anonymous `/api/components` request returns `401`.
-
-Verified on 2026-09-25 before clearing the Table: Entra sign-in, Component create/read/delete, Reserved Order creation, first production download, and an identical second download. The test Board consumed three resistors on the first download: physical stock changed from 1,000 to 997 and remained there on retry. All test records were subsequently cleared.
-
-GitHub Actions [builds, tests, and deploys](https://github.com/Zergie/Coding-Challenge/actions/workflows/ci.yml) passing `main` commits. Deployment uses an Entra application with a federated credential for this repository's immutable GitHub identity and the `main` branch. It has Website Contributor access scoped to this Web App. Repository secrets hold the deployment client, tenant, and subscription IDs; no long lived credential is stored. The Swagger SPA's delegated permission is subject to the tenant's consent policy.
-
-## Azure deployment setup
-
-`infra/main.bicep` defines a Windows App Service F1 plan, a Standard LRS StorageV2 account, a Table, and a system assigned Web App identity with Storage Table Data Contributor on the storage account. The application uses `DefaultAzureCredential` and the Table service endpoint; no storage account key is placed in App Service settings. The region is West Europe (`westeurope`). The [retail estimate](docs/azure-cost-estimate.md) is about **$0.05/month** for 1 GB and 100,000 operations, below the $5/month soft target; check actual subscription pricing before provisioning.
-
-To deploy, sign in to Azure CLI, select the subscription, create a resource group, and apply the template:
-
-```powershell
-$subscriptionId = 'YOUR_SUBSCRIPTION_ID'
-$resourceGroup = 'YOUR_RESOURCE_GROUP'
-$namePrefix = 'YOUR_GLOBALLY_UNIQUE_LOWERCASE_PREFIX'
-$tenantId = 'YOUR_ENTRA_TENANT_ID'
-$apiClientId = 'YOUR_API_CLIENT_ID'
-$browserClientId = 'YOUR_BROWSER_CLIENT_ID'
-az account set --subscription $subscriptionId
-az group create --name $resourceGroup --location westeurope
-az deployment group create --resource-group $resourceGroup --template-file infra/main.bicep --parameters namePrefix=$namePrefix tenantId=$tenantId apiAudience=$apiClientId appIdUri="api://$apiClientId" browserClientId=$browserClientId
-```
-
-Allow time for role assignment propagation before the app first accesses Table Storage. Verify `/health`, anonymous `401`, Entra sign in, and the create-to-download path. The GitHub workflow deploys on a passing `main` push when `vars.AZURE_WEBAPP_NAME` is set; configure OIDC secrets and a federated credential before using it. [Azure's App Service deployment guide](https://learn.microsoft.com/en-us/azure/app-service/deploy-github-actions) covers that setup. Remove the resource group when review ends to stop storage charges.
 
 ## Limits
 
