@@ -15,18 +15,18 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
             CheckDownloadCapacity(input.Boards.Count, recipeLines, demand.Count);
             await AdjustStock(changes, demand, new Dictionary<Guid, long>());
             var order = MakeOrder(id, input, demand);
-            changes.Add(Database.Row("O:" + Database.Id(id), order));
+            changes.Add(Database.OrderRow(order));
             return order.View();
         });
         log.LogInformation("Order {OrderId} created with reservation", id);
         return result;
     }
 
-    public async Task<OrderView?> Find(Guid id) => await db.Get("O:" + Database.Id(id)) is { } row
-        ? Database.Data<OrderRecord>(row).View() : null;
+    public async Task<OrderView?> Find(Guid id) => await db.Get(Database.OrderKey(id)) is { } row
+        ? Database.Order(row).View() : null;
 
     public async Task<IReadOnlyList<OrderView>> Search(string? query) => (await db.List("O:"))
-        .Select(Database.Data<OrderRecord>)
+        .Select(Database.Order)
         .Where(x => string.IsNullOrWhiteSpace(query) || x.Name.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase)
             || x.Description.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase))
         .OrderBy(x => x.CreatedAtUtc).ThenBy(x => x.Id).Select(x => x.View()).ToList();
@@ -35,8 +35,8 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
     {
         var result = await db.Write(async changes =>
         {
-            var row = await db.Get("O:" + Database.Id(id)) ?? throw Database.Missing("Order");
-            var old = Database.Data<OrderRecord>(row);
+            var row = await db.Get(Database.OrderKey(id)) ?? throw Database.Missing("Order");
+            var old = Database.Order(row);
             if (old.Status == "Started") throw Started();
             var input = PartialUpdate.Apply(update, new OrderInput(old.Name, old.Description,
                 old.OrderDate, old.Boards));
@@ -45,7 +45,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
             CheckDownloadCapacity(input.Boards.Count, recipeLines, demand.Count);
             await AdjustStock(changes, demand, old.Demand);
             var updated = MakeOrder(id, input, demand) with { CreatedAtUtc = old.CreatedAtUtc };
-            changes.Replace(row, Database.Row(row.RowKey, updated));
+            changes.Replace(row, Database.OrderRow(updated));
             return updated.View();
         });
         log.LogInformation("Order {OrderId} edited; reservation replaced", id);
@@ -56,8 +56,8 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
     {
         await db.Write(async changes =>
         {
-            var row = await db.Get("O:" + Database.Id(id)) ?? throw Database.Missing("Order");
-            var old = Database.Data<OrderRecord>(row);
+            var row = await db.Get(Database.OrderKey(id)) ?? throw Database.Missing("Order");
+            var old = Database.Order(row);
             if (old.Status == "Started") throw Started();
             await AdjustStock(changes, new Dictionary<Guid, long>(), old.Demand);
             changes.Delete(row);
@@ -70,35 +70,33 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
     {
         var retry = await db.Write(async changes =>
         {
-            var row = await db.Get("O:" + Database.Id(id)) ?? throw Database.Missing("Order");
-            var order = Database.Data<OrderRecord>(row);
+            var row = await db.Get(Database.OrderKey(id)) ?? throw Database.Missing("Order");
+            var order = Database.Order(row);
             if (order.Status == "Started") return true;
             var destination = configuration["Production:Destination"];
             Database.Required(destination, "Production destination configuration");
             var started = DateTimeOffset.UtcNow;
-            var prefix = Database.Id(id);
-            changes.Add(Database.Row("S:" + prefix, new ProductionSnapshotHeaderV3("3.0", destination!.Trim(),
+            changes.Add(Database.Row(Database.SnapshotHeaderKey(id), new ProductionSnapshotHeaderV3("3.0", destination!.Trim(),
                 order.Name, order.OrderDate, started)));
             foreach (var line in order.Boards)
             {
-                var boardRow = await db.Get("B:" + Database.Id(line.BoardId)) ?? throw Database.Missing("Board");
-                var board = Database.Data<BoardRecord>(boardRow);
-                var revisionRow = await db.Get(BoardService.RevisionKey(line.BoardId, line.Revision))
+                var boardRow = await db.Get(Database.BoardKey(line.BoardId)) ?? throw Database.Missing("Board");
+                var board = Database.Board(boardRow);
+                var revisionRow = await db.Get(Database.BoardRevisionKey(line.BoardId, line.Revision))
                     ?? throw Database.Missing("Board revision");
-                var revision = Database.Data<BoardRevisionRecord>(revisionRow);
-                var boardSuffix = $"{Database.Id(line.BoardId)}:{line.Revision:D10}";
-                changes.Add(new TableEntity(Database.Partition, $"SB:{prefix}:{boardSuffix}")
+                var revision = Database.BoardRevision(revisionRow);
+                changes.Add(new TableEntity(Database.Partition, Database.SnapshotBoardKey(id, line.BoardId, line.Revision))
                 {
-                    ["PartNumber"] = board.PartNumber, ["Revision"] = revision.Revision,
+                    ["PartNumber"] = board.PartNumber,
                     ["LengthMilliMm"] = (long)(revision.LengthMm * 1000), ["WidthMilliMm"] = (long)(revision.WidthMm * 1000),
                     ["BuildQuantity"] = line.BuildQuantity
                 });
                 foreach (var ingredient in revision.Recipe)
                 {
-                    var componentRow = await db.Get("C:" + Database.Id(ingredient.ComponentId)) ?? throw Database.Missing("Component");
-                    var component = Database.Data<ComponentRecord>(componentRow);
+                    var componentRow = await db.Get(Database.ComponentKey(ingredient.ComponentId)) ?? throw Database.Missing("Component");
+                    var component = Database.Component(componentRow);
                     changes.Add(new TableEntity(Database.Partition,
-                        $"SC:{prefix}:{boardSuffix}:{Database.Id(ingredient.ComponentId)}")
+                        Database.SnapshotComponentKey(id, line.BoardId, line.Revision, ingredient.ComponentId))
                     {
                         ["PartNumber"] = component.PartNumber, ["QuantityPerBoard"] = ingredient.QuantityPerBoard,
                         ["TotalRequired"] = checked(ingredient.QuantityPerBoard * line.BuildQuantity)
@@ -107,14 +105,14 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
             }
             foreach (var (componentId, required) in order.Demand)
             {
-                var componentRow = await db.Get("C:" + Database.Id(componentId)) ?? throw Database.Missing("Component");
-                var component = Database.Data<ComponentRecord>(componentRow);
+                var componentRow = await db.Get(Database.ComponentKey(componentId)) ?? throw Database.Missing("Component");
+                var component = Database.Component(componentRow);
                 if (component.ReservedStock < required || component.PhysicalStock < required)
                     throw new InvalidOperationException("Reservation and stock are inconsistent.");
-                changes.Replace(componentRow, Database.Row(componentRow.RowKey,
+                changes.Replace(componentRow, Database.ComponentRow(
                     component with { PhysicalStock = component.PhysicalStock - required, ReservedStock = component.ReservedStock - required }));
             }
-            changes.Replace(row, Database.Row(row.RowKey, order with
+            changes.Replace(row, Database.OrderRow(order with
             {
                 Status = "Started", StartedAtUtc = started, Demand = new Dictionary<Guid, long>()
             }));
@@ -131,10 +129,10 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         var recipeLines = 0;
         foreach (var line in lines)
         {
-            var revisionRow = await db.Get(BoardService.RevisionKey(line.BoardId, line.Revision));
-            if (revisionRow is null || await db.Get("B:" + Database.Id(line.BoardId)) is null)
+            var revisionRow = await db.Get(Database.BoardRevisionKey(line.BoardId, line.Revision));
+            if (revisionRow is null || await db.Get(Database.BoardKey(line.BoardId)) is null)
                 throw Database.Missing($"Board revision {line.BoardId}/{line.Revision}");
-            var revision = Database.Data<BoardRevisionRecord>(revisionRow);
+            var revision = Database.BoardRevision(revisionRow);
             recipeLines = checked(recipeLines + revision.Recipe.Count);
             boards.Add(new(line.BuildQuantity, revision.Recipe.Select(x => new RecipeDemand(x.ComponentId, x.QuantityPerBoard)).ToList()));
         }
@@ -155,40 +153,36 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
     {
         foreach (var componentId in next.Keys.Union(old.Keys))
         {
-            var row = await db.Get("C:" + Database.Id(componentId)) ?? throw Database.Missing("Component");
-            var component = Database.Data<ComponentRecord>(row);
+            var row = await db.Get(Database.ComponentKey(componentId)) ?? throw Database.Missing("Component");
+            var component = Database.Component(row);
             var otherReservations = component.ReservedStock - old.GetValueOrDefault(componentId);
             var required = next.GetValueOrDefault(componentId);
             var available = component.PhysicalStock - otherReservations;
             if (required > available)
                 throw new DomainException(409, "insufficient_stock",
                     $"Component {component.PartNumber} requires {required} pieces but only {available} are available; shortfall {required - available}.");
-            changes.Replace(row, Database.Row(row.RowKey,
+            changes.Replace(row, Database.ComponentRow(
                 component with { ReservedStock = checked(otherReservations + required) }));
         }
     }
 
     private async Task<ProductionDownload> LoadSnapshot(Guid id)
     {
-        var prefix = Database.Id(id);
-        var headerRow = await db.Get("S:" + prefix) ?? throw new InvalidOperationException("Started Order has no production snapshot.");
+        var headerRow = await db.Get(Database.SnapshotHeaderKey(id)) ?? throw new InvalidOperationException("Started Order has no production snapshot.");
         var header = ReadSnapshotHeader(headerRow);
         var schemaVersion = header.SchemaVersion;
         var protocol = ParseProtocol(schemaVersion);
         var boards = new List<SnapshotBoard>();
-        foreach (var boardRow in await db.List("SB:" + prefix + ":"))
+        foreach (var boardRow in await db.List(Database.SnapshotBoardPrefix(id)))
         {
-            var boardSuffix = boardRow.RowKey[("SB:" + prefix + ":").Length..];
-            var boardId = Guid.ParseExact(boardSuffix.Split(':')[0], "N");
+            var (boardId, revision) = Database.SnapshotBoard(boardRow, id);
             var components = new List<SnapshotComponent>();
-            var componentPrefix = $"SC:{prefix}:{boardSuffix}:";
-            foreach (var componentRow in await db.List(componentPrefix))
+            foreach (var componentRow in await db.List(Database.SnapshotComponentPrefix(boardRow, id)))
             {
-                var componentId = Guid.ParseExact(componentRow.RowKey[componentPrefix.Length..], "N");
+                var componentId = Database.SnapshotComponentId(componentRow, boardRow, id);
                 components.Add(new(componentId, (string)componentRow["PartNumber"],
                     (long)componentRow["QuantityPerBoard"], (long)componentRow["TotalRequired"]));
             }
-            var revision = (int)boardRow["Revision"];
             boards.Add(new(boardId, (string)boardRow["PartNumber"], revision,
                 (long)boardRow["LengthMilliMm"] / 1000m, (long)boardRow["WidthMilliMm"] / 1000m,
                 (long)boardRow["BuildQuantity"], components.OrderBy(x => x.PartNumber).ToList()));

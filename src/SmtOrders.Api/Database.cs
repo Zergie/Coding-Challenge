@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Globalization;
 using Azure;
 using Azure.Data.Tables;
 
@@ -115,6 +116,69 @@ public sealed class Database(TableClient table)
     }
     public static T Data<T>(TableEntity row) => JsonSerializer.Deserialize<T>((string)row["Json"])!;
     public static string Id(Guid id) => id.ToString("N");
+    internal static string ComponentKey(Guid id) => "C:" + Id(id);
+    internal static string BoardKey(Guid id) => "B:" + Id(id);
+    internal static string BoardRevisionPrefix(Guid id) => $"BR:{Id(id)}:";
+    internal static string BoardRevisionKey(Guid id, int revision) => $"{BoardRevisionPrefix(id)}{revision:D8}";
+    internal static string OrderKey(Guid id) => "O:" + Id(id);
+    internal static string SnapshotHeaderKey(Guid orderId) => "S:" + Id(orderId);
+    internal static string SnapshotBoardPrefix(Guid orderId) => $"SB:{Id(orderId)}:";
+    internal static string SnapshotBoardKey(Guid orderId, Guid boardId, int revision) =>
+        $"{SnapshotBoardPrefix(orderId)}{Id(boardId)}:{revision:D10}";
+    internal static string SnapshotComponentKey(Guid orderId, Guid boardId, int revision, Guid componentId) =>
+        $"SC:{SnapshotBoardKey(orderId, boardId, revision)[3..]}:{Id(componentId)}";
+
+    internal static TableEntity ComponentRow(ComponentRecord record) => Row(ComponentKey(record.Id), record);
+    internal static TableEntity BoardRow(BoardRecord record) => Row(BoardKey(record.Id), record);
+    internal static TableEntity BoardRevisionRow(BoardRevisionRecord record) =>
+        Row(BoardRevisionKey(record.BoardId, record.Revision), record);
+    internal static TableEntity OrderRow(OrderRecord record) => Row(OrderKey(record.Id), record);
+
+    internal static ComponentRecord Component(TableEntity row) =>
+        Data<ComponentRecord>(row) with { Id = ParseGuid(row.RowKey, "C:") };
+    internal static BoardRecord Board(TableEntity row) =>
+        Data<BoardRecord>(row) with { Id = ParseGuid(row.RowKey, "B:") };
+    internal static BoardRevisionRecord BoardRevision(TableEntity row)
+    {
+        var (id, revision) = ParseRevision(row.RowKey, "BR:");
+        return Data<BoardRevisionRecord>(row) with { BoardId = id, Revision = revision };
+    }
+    internal static OrderRecord Order(TableEntity row) =>
+        Data<OrderRecord>(row) with { Id = ParseGuid(row.RowKey, "O:") };
+    internal static (Guid BoardId, int Revision) SnapshotBoard(TableEntity row, Guid orderId)
+    {
+        var key = row.RowKey;
+        var prefix = SnapshotBoardPrefix(orderId);
+        if (!key.StartsWith(prefix, StringComparison.Ordinal)) throw new InvalidOperationException($"Unexpected RowKey: {key}");
+        var suffix = key[prefix.Length..];
+        if (!suffix.Contains(':') && row.TryGetValue("Revision", out var legacyRevision))
+            return (Guid.ParseExact(suffix, "N"), (int)legacyRevision);
+        return ParseRevision(key, prefix);
+    }
+    internal static string SnapshotComponentPrefix(TableEntity boardRow, Guid orderId)
+    {
+        var prefix = SnapshotBoardPrefix(orderId);
+        if (!boardRow.RowKey.StartsWith(prefix, StringComparison.Ordinal))
+            throw new InvalidOperationException($"Unexpected RowKey: {boardRow.RowKey}");
+        return $"SC:{boardRow.RowKey[3..]}:";
+    }
+    internal static Guid SnapshotComponentId(TableEntity row, TableEntity boardRow, Guid orderId) =>
+        ParseGuid(row.RowKey, SnapshotComponentPrefix(boardRow, orderId));
+
+    private static Guid ParseGuid(string key, string prefix)
+    {
+        if (!key.StartsWith(prefix, StringComparison.Ordinal)) throw new InvalidOperationException($"Unexpected RowKey: {key}");
+        return Guid.ParseExact(key[prefix.Length..], "N");
+    }
+    private static (Guid Id, int Revision) ParseRevision(string key, string prefix)
+    {
+        if (!key.StartsWith(prefix, StringComparison.Ordinal)) throw new InvalidOperationException($"Unexpected RowKey: {key}");
+        var suffix = key[prefix.Length..];
+        var separator = suffix.IndexOf(':');
+        if (separator < 0) throw new InvalidOperationException($"Unexpected RowKey: {key}");
+        return (Guid.ParseExact(suffix[..separator], "N"),
+            int.Parse(suffix[(separator + 1)..], NumberStyles.None, CultureInfo.InvariantCulture));
+    }
     public static string PartKey(string type, string part) => type + Convert.ToHexString(
         System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(part.Trim().ToUpperInvariant())));
 

@@ -113,6 +113,61 @@ public sealed class ApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Row_keys_supply_stored_identities_and_snapshot_revision()
+    {
+        Authenticate();
+        var component = await CreateComponent("ROW-KEY", 20);
+        var board = await CreateBoard(component.Id);
+        var revisedResponse = await _client.PutAsJsonAsync($"/api/boards/{board.Id}", new { name = "Revision two" });
+        Assert.Equal(HttpStatusCode.OK, revisedResponse.StatusCode);
+        var revised = (await revisedResponse.Content.ReadFromJsonAsync<BoardView>())!;
+        var createdResponse = await _client.PostAsJsonAsync("/api/orders", new OrderInput("Key order", "Stored identity",
+            new DateOnly(2026, 9, 25), [new(board.Id, revised.Revision, 2)]));
+        Assert.Equal(HttpStatusCode.Created, createdResponse.StatusCode);
+        var order = (await createdResponse.Content.ReadFromJsonAsync<OrderView>())!;
+
+        var table = _app.Services.GetRequiredService<TableClient>();
+        async Task<JsonElement> StoredJson(string key)
+        {
+            var row = (await table.GetEntityAsync<TableEntity>(Database.Partition, key)).Value;
+            using var json = JsonDocument.Parse((string)row["Json"]);
+            return json.RootElement.Clone();
+        }
+        Assert.False((await StoredJson($"C:{component.Id:N}")).TryGetProperty("Id", out _));
+        Assert.False((await StoredJson($"B:{board.Id:N}")).TryGetProperty("Id", out _));
+        var revisionJson = await StoredJson($"BR:{board.Id:N}:{revised.Revision:D8}");
+        Assert.False(revisionJson.TryGetProperty("BoardId", out _));
+        Assert.False(revisionJson.TryGetProperty("Revision", out _));
+        Assert.True(revisionJson.GetProperty("Recipe")[0].TryGetProperty("ComponentId", out _));
+        var orderJson = await StoredJson($"O:{order.Id:N}");
+        Assert.False(orderJson.TryGetProperty("Id", out _));
+        Assert.True(orderJson.GetProperty("Boards")[0].TryGetProperty("BoardId", out _));
+        Assert.True(orderJson.GetProperty("Boards")[0].TryGetProperty("Revision", out _));
+
+        Assert.Equal(component.Id, (await _client.GetFromJsonAsync<ComponentView>($"/api/components/{component.Id}"))!.Id);
+        Assert.Equal(board.Id, (await _client.GetFromJsonAsync<BoardView>($"/api/boards/{board.Id}"))!.Id);
+        Assert.Equal(revised.Revision, (await _client.GetFromJsonAsync<BoardView>($"/api/boards/{board.Id}"))!.Revision);
+        Assert.Equal(order.Id, (await _client.GetFromJsonAsync<OrderView>($"/api/orders/{order.Id}"))!.Id);
+        Assert.Equal(6, (await _client.GetFromJsonAsync<ComponentView>($"/api/components/{component.Id}"))!.ReservedStock);
+        Assert.Contains((await _client.GetFromJsonAsync<List<BoardView>>($"/api/boards/{board.Id}/revisions"))!,
+            x => x.Id == board.Id && x.Revision == revised.Revision);
+        Assert.Contains((await _client.GetFromJsonAsync<List<OrderView>>("/api/orders?q=Key%20order"))!,
+            x => x.Id == order.Id);
+
+        var download = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
+        Assert.Equal(HttpStatusCode.OK, download.StatusCode);
+        var handoff = (await download.Content.ReadFromJsonAsync<ProductionHandoff>())!;
+        Assert.Equal(revised.Revision, handoff.Boards.Single().Revision);
+        var snapshot = (await table.GetEntityAsync<TableEntity>(Database.Partition,
+            $"SB:{order.Id:N}:{board.Id:N}:{revised.Revision:D10}")).Value;
+        Assert.False(snapshot.ContainsKey("Revision"));
+        Assert.False((await StoredJson($"C:{component.Id:N}")).TryGetProperty("Id", out _));
+        Assert.False((await StoredJson($"O:{order.Id:N}")).TryGetProperty("Id", out _));
+        Assert.Equal(await download.Content.ReadAsByteArrayAsync(),
+            await (await _client.PostAsync($"/api/orders/{order.Id}/download", null)).Content.ReadAsByteArrayAsync());
+    }
+
+    [Fact]
     public async Task Reservation_and_download_consume_stock_once_and_retry_bytes_match()
     {
         Authenticate();

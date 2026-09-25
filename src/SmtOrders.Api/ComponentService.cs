@@ -14,7 +14,7 @@ public sealed class ComponentService(Database db, BoardService boards, ILogger<C
             var indexKey = Database.PartKey("CP:", part);
             if (await db.Get(indexKey) is not null) throw Database.Duplicate();
             var record = new ComponentRecord(id, part, input.Name.Trim(), input.Description.Trim(), input.PhysicalStock, 0);
-            changes.Add(Database.Row("C:" + Database.Id(id), record));
+            changes.Add(Database.ComponentRow(record));
             changes.Add(Database.Row(indexKey, id));
             return record.View();
         });
@@ -23,10 +23,10 @@ public sealed class ComponentService(Database db, BoardService boards, ILogger<C
     }
 
     public async Task<ComponentView?> FindComponent(Guid id) =>
-        await db.Get("C:" + Database.Id(id)) is { } row ? Database.Data<ComponentRecord>(row).View() : null;
+        await db.Get(Database.ComponentKey(id)) is { } row ? Database.Component(row).View() : null;
 
     public async Task<IReadOnlyList<ComponentView>> SearchComponents(string? query) =>
-        (await db.List("C:")).Select(Database.Data<ComponentRecord>)
+        (await db.List("C:")).Select(Database.Component)
             .Where(x => CatalogSearch.Match(x.Name, x.Description, query)).OrderBy(x => x.Name).ThenBy(x => x.Id)
             .Select(x => x.View()).ToList();
 
@@ -34,8 +34,8 @@ public sealed class ComponentService(Database db, BoardService boards, ILogger<C
     {
         var result = await db.Write(async changes =>
         {
-            var oldRow = await db.Get("C:" + Database.Id(id)) ?? throw Database.Missing("Component");
-            var old = Database.Data<ComponentRecord>(oldRow);
+            var oldRow = await db.Get(Database.ComponentKey(id)) ?? throw Database.Missing("Component");
+            var old = Database.Component(oldRow);
             var input = PartialUpdate.Apply(update, new ComponentInput(old.PartNumber, old.Name,
                 old.Description, old.PhysicalStock));
             Validate(input);
@@ -56,7 +56,7 @@ public sealed class ComponentService(Database db, BoardService boards, ILogger<C
             }
             var updated = old with { PartNumber = part, Name = input.Name.Trim(), Description = input.Description.Trim(),
                 PhysicalStock = input.PhysicalStock };
-            changes.Replace(oldRow, Database.Row(oldRow.RowKey, updated));
+            changes.Replace(oldRow, Database.ComponentRow(updated));
             return updated.View();
         });
         log.LogInformation("Component {ComponentId} updated", id);
@@ -67,9 +67,9 @@ public sealed class ComponentService(Database db, BoardService boards, ILogger<C
     {
         await db.Write(async changes =>
         {
-            var row = await db.Get("C:" + Database.Id(id)) ?? throw Database.Missing("Component");
+            var row = await db.Get(Database.ComponentKey(id)) ?? throw Database.Missing("Component");
             if (await boards.ReferencesComponent(id)) throw Database.Referenced("Component");
-            var component = Database.Data<ComponentRecord>(row);
+            var component = Database.Component(row);
             if (component.ReservedStock != 0) throw Database.Referenced("Component");
             changes.Delete(row);
             changes.Delete((await db.Get(Database.PartKey("CP:", component.PartNumber)))!);
