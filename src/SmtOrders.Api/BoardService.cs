@@ -119,6 +119,9 @@ public sealed class BoardService(Database db, ILogger<BoardService> log)
             if (await db.Get("C:" + Database.Id(line.ComponentId)) is null) throw Database.Missing("Component");
     }
 
+    internal async Task<bool> ReferencesComponent(Guid id) => (await db.List("BR:"))
+        .Any(row => Database.Data<BoardRevisionRecord>(row).Recipe.Any(line => line.ComponentId == id));
+
     private static void Validate(BoardInput input)
     {
         Database.Required(input.PartNumber, "Part number");

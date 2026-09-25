@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace SmtOrders.Api;
 
-public sealed class ComponentService(Database db, ILogger<ComponentService> log)
+public sealed class ComponentService(Database db, BoardService boards, ILogger<ComponentService> log)
 {
     public async Task<ComponentView> CreateComponent(ComponentInput input)
     {
@@ -45,7 +45,7 @@ public sealed class ComponentService(Database db, ILogger<ComponentService> log)
             var part = input.PartNumber.Trim();
             if (part != old.PartNumber)
             {
-                if (await ReferencedByBoard(id)) throw Database.Referenced("Component part number");
+                if (await boards.ReferencesComponent(id)) throw Database.Referenced("Component part number");
                 var newIndex = Database.PartKey("CP:", part);
                 if (newIndex != Database.PartKey("CP:", old.PartNumber))
                 {
@@ -68,7 +68,7 @@ public sealed class ComponentService(Database db, ILogger<ComponentService> log)
         await db.Write(async changes =>
         {
             var row = await db.Get("C:" + Database.Id(id)) ?? throw Database.Missing("Component");
-            if (await ReferencedByBoard(id)) throw Database.Referenced("Component");
+            if (await boards.ReferencesComponent(id)) throw Database.Referenced("Component");
             var component = Database.Data<ComponentRecord>(row);
             if (component.ReservedStock != 0) throw Database.Referenced("Component");
             changes.Delete(row);
@@ -77,9 +77,6 @@ public sealed class ComponentService(Database db, ILogger<ComponentService> log)
         });
         log.LogInformation("Component {ComponentId} deleted", id);
     }
-
-    private async Task<bool> ReferencedByBoard(Guid id) => (await db.List("BR:"))
-        .Any(x => Database.Data<BoardRevisionRecord>(x).Recipe.Any(r => r.ComponentId == id));
 
     private static void Validate(ComponentInput input)
     {
