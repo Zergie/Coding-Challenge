@@ -1,11 +1,22 @@
 using System.Text.Json;
 using System.Globalization;
+using System.Reflection;
 using Azure;
 using Azure.Data.Tables;
 
 namespace SmtOrders.Api;
 
-internal enum PartNumberIndex { Component, Board }
+[AttributeUsage(AttributeTargets.Field)]
+internal sealed class RowPrefixAttribute(string key) : Attribute
+{
+    public string Key { get; } = key;
+}
+
+internal enum PartNumberIndex
+{
+    [RowPrefix("CP:")] Component,
+    [RowPrefix("BP:")] Board
+}
 
 // All demo data shares a partition. Every write also replaces this version row with
 // its ETag, so a batch planned from stale reads cannot commit after another writer.
@@ -13,6 +24,13 @@ public sealed class Database(TableClient table)
 {
     public const string Partition = "demo";
     private const string VersionKey = "M:version";
+    private static readonly IReadOnlyDictionary<PartNumberIndex, RowPrefixAttribute> IndexPrefixes =
+        Enum.GetValues<PartNumberIndex>().ToDictionary(index => index, index =>
+            typeof(PartNumberIndex).GetField(index.ToString())!.GetCustomAttribute<RowPrefixAttribute>()
+            ?? throw new InvalidOperationException($"PartNumberIndex.{index} has no row prefix."));
+
+    private static RowPrefixAttribute Prefix(PartNumberIndex index) => IndexPrefixes.TryGetValue(index, out var prefix)
+        ? prefix : throw new ArgumentOutOfRangeException(nameof(index));
 
     public async Task Clear()
     {
@@ -129,6 +147,12 @@ public sealed class Database(TableClient table)
         $"{SnapshotBoardPrefix(orderId)}{Id(boardId)}:{revision:D10}";
     internal static string SnapshotComponentKey(Guid orderId, Guid boardId, int revision, Guid componentId) =>
         $"SC:{SnapshotBoardKey(orderId, boardId, revision)[3..]}:{Id(componentId)}";
+    internal static string PartKey(PartNumberIndex index, string partNumber)
+    {
+        var prefix = Prefix(index).Key;
+        return prefix + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(partNumber.Trim().ToUpperInvariant())));
+    }
 
     internal static TableEntity ComponentRow(ComponentRecord record) => Row(ComponentKey(record.Id), record);
     internal static TableEntity BoardRow(BoardRecord record) => Row(BoardKey(record.Id), record);
@@ -177,17 +201,6 @@ public sealed class Database(TableClient table)
         if (separator < 0) throw new InvalidOperationException($"Unexpected RowKey: {key}");
         return (Guid.ParseExact(suffix[..separator], "N"),
             int.Parse(suffix[(separator + 1)..], NumberStyles.None, CultureInfo.InvariantCulture));
-    }
-    internal static string PartKey(PartNumberIndex index, string part)
-    {
-        var prefix = index switch
-        {
-            PartNumberIndex.Component => "CP:",
-            PartNumberIndex.Board => "BP:",
-            _ => throw new ArgumentOutOfRangeException(nameof(index))
-        };
-        return prefix + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes(part.Trim().ToUpperInvariant())));
     }
 
     public static void Required(string? value, string field)

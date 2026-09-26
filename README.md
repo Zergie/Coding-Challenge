@@ -45,14 +45,6 @@ Compose runs the Azurite Table service on port 10002, the API on port 8080, and 
 
 Local application events stay on the console; view them with `docker compose logs -f api`.
 
-To clear a disposable local Table and start again with no application records, run:
-
-```sh
-docker compose run --rm api --clear-data
-```
-
-This deletes all records, including started Orders and snapshots, then recreates only the version record. Run it only against a disposable Table.
-
 For tests outside Compose, start Azurite locally (`npx azurite-table --location ./azurite-data`) and run:
 
 ```sh

@@ -98,12 +98,6 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 var database = app.Services.GetRequiredService<Database>();
-if (args.Contains("--clear-data"))
-{
-    await database.Clear();
-    Console.WriteLine("Application data cleared. The Table contains only its version record.");
-    return;
-}
 await database.Initialize();
 
 app.UseSerilogRequestLogging();
