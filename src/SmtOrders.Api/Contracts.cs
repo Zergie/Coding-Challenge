@@ -27,7 +27,7 @@ public sealed record HandoffComponent(Guid ComponentId, string PartNumber, long 
 public sealed record HandoffBoard(Guid BoardId, string PartNumber, int Revision, decimal LengthMm,
     decimal WidthMm, long BuildQuantity, IReadOnlyList<HandoffComponent> Components);
 public sealed record HandoffMaterial(Guid ComponentId, string PartNumber, long TotalRequired);
-public sealed record ProductionHandoff(string SchemaVersion, string Destination, Guid OrderId, string OrderName,
+public sealed record ProductionHandoff(string SchemaVersion, Guid OrderId, string OrderName,
     DateOnly OrderDate, DateTimeOffset ProductionStartedAtUtc,
     IReadOnlyList<HandoffBoard> Boards, IReadOnlyList<HandoffMaterial> Materials)
 {

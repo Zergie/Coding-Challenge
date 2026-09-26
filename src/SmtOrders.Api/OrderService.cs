@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace SmtOrders.Api;
 
-public sealed class OrderService(Database db, IConfiguration configuration, ILogger<OrderService> log)
+public sealed class OrderService(Database db, ILogger<OrderService> log)
 {
     public async Task<OrderView> Create(OrderInput input)
     {
@@ -73,10 +73,8 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
             var row = await db.Get(Database.OrderKey(id)) ?? throw Database.Missing("Order");
             var order = Database.Order(row);
             if (order.Status == OrderStatus.Started) return true;
-            var destination = configuration["Production:Destination"];
-            Database.Required(destination, "Production destination configuration");
             var started = DateTimeOffset.UtcNow;
-            changes.Add(Database.Row(Database.SnapshotHeaderKey(id), new ProductionSnapshotHeader(ProductionHandoff.CurrentSchemaVersion, destination!.Trim(),
+            changes.Add(Database.Row(Database.SnapshotHeaderKey(id), new ProductionSnapshotHeader(ProductionHandoff.CurrentSchemaVersion,
                 order.Name, order.OrderDate, started)));
             foreach (var line in order.Boards)
             {
@@ -196,7 +194,7 @@ public sealed class OrderService(Database db, IConfiguration configuration, ILog
         var currentMaterials = allComponents.GroupBy(x => x.ComponentId)
             .Select(group => new HandoffMaterial(group.Key, group.First().PartNumber, SumRequired(group)))
             .OrderBy(x => x.PartNumber).ThenBy(x => x.ComponentId).ToList();
-        return new(ProductionHandoff.CurrentSchemaVersion, header.Destination, id, header.OrderName, header.OrderDate,
+        return new(ProductionHandoff.CurrentSchemaVersion, id, header.OrderName, header.OrderDate,
             header.StartedAtUtc, currentBoards, currentMaterials);
     }
 

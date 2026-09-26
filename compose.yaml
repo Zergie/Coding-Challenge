@@ -25,7 +25,6 @@ services:
       Entra__Audience: ${ENTRA_API_AUDIENCE:?Set ENTRA_API_AUDIENCE in .env}
       Entra__AppIdUri: ${ENTRA_APP_ID_URI:?Set ENTRA_APP_ID_URI in .env}
       Entra__BrowserClientId: ${ENTRA_BROWSER_CLIENT_ID:?Set ENTRA_BROWSER_CLIENT_ID in .env}
-      Production__Destination: SMT-LINE-1
   web:
     build: ./web
     depends_on:

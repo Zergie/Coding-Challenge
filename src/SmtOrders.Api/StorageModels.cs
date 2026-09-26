@@ -21,5 +21,5 @@ internal sealed record OrderRecord([property: JsonIgnore] Guid Id, string Name, 
             .Select(x => new OrderLineView(x.BoardId, x.Revision, x.BuildQuantity)).ToList());
 }
 
-internal sealed record ProductionSnapshotHeader(string SchemaVersion, string Destination, string OrderName,
+internal sealed record ProductionSnapshotHeader(string SchemaVersion, string OrderName,
     DateOnly OrderDate, DateTimeOffset StartedAtUtc);

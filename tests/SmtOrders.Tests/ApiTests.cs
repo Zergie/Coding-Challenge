@@ -502,7 +502,7 @@ public sealed class ApiTests : IAsyncLifetime
         var root = document.RootElement;
         Assert.Equal("1.0", root.GetProperty("schemaVersion").GetString());
         Assert.False(root.TryGetProperty("dueDate", out _));
-        Assert.Equal("SMT-LINE-1", root.GetProperty("destination").GetString());
+        Assert.False(root.TryGetProperty("destination", out _));
         Assert.Equal(order.Id.ToString(), root.GetProperty("orderId").GetString());
         Assert.Equal("2026-09-24", root.GetProperty("orderDate").GetString());
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("productionStartedAtUtc").GetString()));
@@ -525,7 +525,16 @@ public sealed class ApiTests : IAsyncLifetime
             Assert.False(header.ContainsKey(oldField));
         using var storedHeader = JsonDocument.Parse((string)header["Json"]);
         Assert.Equal("1.0", storedHeader.RootElement.GetProperty("SchemaVersion").GetString());
+        Assert.False(storedHeader.RootElement.TryGetProperty("Destination", out _));
         Assert.False(storedHeader.RootElement.TryGetProperty("DueDate", out _));
+        var legacyHeader = JsonNode.Parse((string)header["Json"])!.AsObject();
+        legacyHeader["Destination"] = "SMT-LINE-1";
+        header["Json"] = legacyHeader.ToJsonString();
+        await table.UpdateEntityAsync(header, header.ETag, TableUpdateMode.Replace);
+        var retry = await _client.PostAsync($"/api/orders/{order.Id}/download", null);
+        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+        using var retriedHandoff = JsonDocument.Parse(await retry.Content.ReadAsByteArrayAsync());
+        Assert.False(retriedHandoff.RootElement.TryGetProperty("destination", out _));
         Assert.Equal(HttpStatusCode.Conflict,
             (await _client.PutAsJsonAsync($"/api/orders/{order.Id}", input)).StatusCode);
     }

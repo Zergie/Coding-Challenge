@@ -111,7 +111,7 @@ $principalId = az webapp identity assign --name $webApp --resource-group $resour
 $storageId = az storage account show --name $storageAccount --resource-group $resourceGroup --query id --output tsv
 az role assignment create --assignee-object-id $principalId --assignee-principal-type ServicePrincipal --role 'Storage Table Data Contributor' --scope $storageId
 
-az webapp config appsettings set --name $webApp --resource-group $resourceGroup --settings "Storage__TableServiceUri=https://$($storageAccount).table.core.windows.net" 'Storage__TableName=SmtOrders' "Entra__TenantId=$tenantId" "Entra__Audience=$apiAudience" "Entra__AppIdUri=$appIdUri" "Entra__BrowserClientId=$browserClientId" 'Production__Destination=SMT-LINE-1'
+az webapp config appsettings set --name $webApp --resource-group $resourceGroup --settings "Storage__TableServiceUri=https://$($storageAccount).table.core.windows.net" 'Storage__TableName=SmtOrders' "Entra__TenantId=$tenantId" "Entra__Audience=$apiAudience" "Entra__AppIdUri=$appIdUri" "Entra__BrowserClientId=$browserClientId"
 
 dotnet publish src/SmtOrders.Api/SmtOrders.Api.csproj --configuration Release --output .scratch/publish
 Compress-Archive -Path .scratch/publish/* -DestinationPath .scratch/api.zip -Force
@@ -147,7 +147,7 @@ Use real IDs returned by the API for Board and Order requests. Invalid input ret
 
 ## Production protocol
 
-Production downloads use media type `application/vnd.smt-production.v1+json` and `schemaVersion` `1.0`. This planning and kitting handoff for `SMT-LINE-1` contains the Order date and UTC start time, ordered Board lines with dimensions and build quantities, per Board Component IDs and quantities per Board, and aggregate materials with Component IDs and total required quantities. The actual placement program is managed outside this API; the JSON contains no placement coordinates. A second download of a started Order returns the same snapshot bytes.
+Production downloads use media type `application/vnd.smt-production.v1+json` and `schemaVersion` `1.0`. This planning and kitting handoff contains the Order date and UTC start time, ordered Board lines with dimensions and build quantities, per Board Component IDs and quantities per Board, and aggregate materials with Component IDs and total required quantities. The actual placement program is managed outside this API; the JSON contains no placement coordinates or destination. A second download of a started Order returns the same snapshot bytes.
 
 ## Limits
 
