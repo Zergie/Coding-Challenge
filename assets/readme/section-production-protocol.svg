@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="132" viewBox="0 0 1200 132" role="img" aria-labelledby="title desc">
+  <title id="title">Production protocol</title>
+  <desc id="desc">Section 06: Production protocol, in the SMT Order Management teal visual system.</desc>
+  <rect width="1200" height="132" rx="16" fill="#f4f7f7"/>
+  <g id="section-icon" transform="translate(42 20)" fill="none" stroke="#075a62" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M22 8H62L80 26V84H22ZM62 8V26H80M34 42H68M34 54H68M34 66H56"/></g>
+  <text x="170" y="83" font-family="Segoe UI, Arial, sans-serif" font-size="42" font-weight="650" letter-spacing="-0.6" fill="#102e36">Production protocol</text>
+  <path d="M1080 40V92" stroke="#c5d5d7" stroke-width="2"/>
+  <text x="1130" y="81" text-anchor="middle" font-family="Consolas, monospace" font-size="27" fill="#075a62">06</text>
+</svg>

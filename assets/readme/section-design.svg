@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="132" viewBox="0 0 1200 132" role="img" aria-labelledby="title desc">
+  <title id="title">Design</title>
+  <desc id="desc">Section 01: Design, in the SMT Order Management teal visual system.</desc>
+  <rect width="1200" height="132" rx="16" fill="#f4f7f7"/>
+  <g id="section-icon" transform="translate(42 20)" fill="none" stroke="#075a62" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="12" y="12" width="28" height="28" rx="4"/><rect x="60" y="48" width="28" height="28" rx="4"/><path d="M40 26H74V48M26 40V62H60"/></g>
+  <text x="170" y="83" font-family="Segoe UI, Arial, sans-serif" font-size="42" font-weight="650" letter-spacing="-0.6" fill="#102e36">Design</text>
+  <path d="M1080 40V92" stroke="#c5d5d7" stroke-width="2"/>
+  <text x="1130" y="81" text-anchor="middle" font-family="Consolas, monospace" font-size="27" fill="#075a62">01</text>
+</svg>

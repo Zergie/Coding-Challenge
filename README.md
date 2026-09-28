@@ -1,16 +1,28 @@
-# SMT Order Management
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="SMT Order Management: plan Boards, reserve parts, and hand off to production, with an illustrative material-demand calculation">
+</p>
 
 An ASP.NET Core 8 API and web app for Components, versioned Board recipes, stock reservations, Orders, and production handoffs. Azure Table Storage persists the data; local development uses Azurite.
 
 Explore the [web app](https://orange-moss-0c91b0103.2.azurestaticapps.net/) or [Swagger](https://smt-orders-e103ef-api.azurewebsites.net/swagger) with an assigned Entra account. Create Components, assemble a Board recipe, and place an Order to try the full workflow.
 
-## Design
+
+
+
+<p align="center">
+  <img src="./assets/readme/section-design.svg" width="100%" alt="Design">
+</p>
 
 Routes and Entra authentication live in `Program`; Component, Board, and Order services own the domain rules. `MaterialDemand` calculates recipe demand, and `Database` commits changes atomically in one Table partition with ETag checks and retries for concurrent writes.
 
 Available stock is physical stock minus reservations. Board edits create revisions; Orders retain their selected revisions. Reserved Orders can be edited or deleted. The first production download starts the Order, consumes stock, releases reservations, and saves a snapshot in one transaction. Later downloads return the same bytes; Started Orders cannot be edited or deleted.
 
-## Entra registration
+
+
+
+<p align="center">
+  <img src="./assets/readme/section-entra-registration.svg" width="100%" alt="Entra registration">
+</p>
 
 1. Create a single tenant API app registration. Expose an Application ID URI such as `api://<api-client-id>` and the delegated scope `access_as_user`. Set `Entra__Audience` to the API token's `aud` value, `Entra__AppIdUri` to the URI, and `Entra__TenantId` to the tenant GUID.
 2. Create a separate single tenant SPA registration. Add redirect URIs `http://localhost:8081/auth.html` and `https://<static-app-host>/auth.html` for the web UI, plus `http://localhost:8080/swagger/oauth2-redirect.html` and `https://<api-app>.azurewebsites.net/swagger/oauth2-redirect.html` for Swagger. Give it delegated permission for the API scope and grant admin consent. Set `Entra__BrowserClientId` to its client ID. Both browser interfaces use authorization code with PKCE.
@@ -18,7 +30,12 @@ Available stock is physical stock minus reservations. Board edits create revisio
 
 For another localhost port, register its redirect URI. See [Microsoft's JWT bearer guidance](https://learn.microsoft.com/en-us/aspnet/core/security/authentication/configure-jwt-bearer-authentication).
 
-## Run locally with Azurite
+
+
+
+<p align="center">
+  <img src="./assets/readme/section-run-locally-with-azurite.svg" width="100%" alt="Run locally with Azurite">
+</p>
 
 Requirements: Docker Compose and a Microsoft Entra tenant. Complete the registration above, copy `.env.example` to `.env`, and fill in your Entra values. Update `web/config.local.json` with the same tenant, browser client, and API scope. `.env` is Git ignored.
 
@@ -36,7 +53,12 @@ dotnet build SmtOrders.sln --no-restore
 dotnet test SmtOrders.sln --no-build
 ```
 
-## Run on Azure
+
+
+
+<p align="center">
+  <img src="./assets/readme/section-run-on-azure.svg" width="100%" alt="Run on Azure">
+</p>
 
 The shared demo uses App Service and Table Storage in West Europe, plus Azure Static Web Apps for the UI. Use the web app or Swagger links above to explore; assigned users share the deployment's data and permissions.
 
@@ -109,7 +131,12 @@ Deploy `web/dist` to Azure Static Web Apps with the [Static Web Apps CLI](https:
 
 Remove the resource group when finished to stop storage charges.
 
-## API walkthrough
+
+
+
+<p align="center">
+  <img src="./assets/readme/section-api-walkthrough.svg" width="100%" alt="API walkthrough">
+</p>
 
 Use the web app for the workflow and Swagger for endpoint schemas and editable requests:
 
@@ -120,10 +147,20 @@ Use the web app for the workflow and Swagger for endpoint schemas and editable r
 
 `PUT` accepts partial objects; omitted fields stay unchanged, while supplied `recipe` or `boards` arrays replace the whole array. Errors use `{ "code": "...", "message": "..." }` with `400` for invalid input, `404` for missing records, and `409` for conflicts.
 
-## Production protocol
+
+
+
+<p align="center">
+  <img src="./assets/readme/section-production-protocol.svg" width="100%" alt="Production protocol">
+</p>
 
 Downloads use `application/vnd.smt-production.v1+json` with `schemaVersion` `1.0`. The saved snapshot includes Order and start dates, Board dimensions and build quantities, recipes, and aggregate material demand. It is a planning and kitting handoff; placement coordinates and machine programs are managed elsewhere.
 
-## Limits
 
-One partition serializes writes; catalog scans and JSON rows suit a small demo. Transactions allow at most 100 entity operations, and Boards are capped at 97 revisions (`batch_limit` / `revision_limit`). Existing legacy Tables require a fresh Table because no migration is provided. App Service Free may sleep or reach its quota. Production completion, scrap, replenishment, and line management are outside the API.
+
+
+<p align="center">
+  <img src="./assets/readme/section-limits.svg" width="100%" alt="Limits">
+</p>
+
+One partition serializes writes; catalog scans and JSON rows suit a small demo. Transactions allow at most 100 entity operations, and Boards are capped at 97 revisions (`batch_limit` / `revision_limit`). App Service Free may sleep or reach its quota. Production completion, scrap, replenishment, and line management are outside the API.

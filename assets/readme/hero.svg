@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">SMT Order Management</title>
+  <desc id="desc">Components, versioned Board recipes, stock reservations, and production handoffs. Illustrative material demand: four parts per Board times twenty-five Boards reserves one hundred parts. Five hundred physical parts minus one hundred reserved leaves four hundred available.</desc>
+  <!-- Palette follows web/public/style.css. All example quantities are illustrative. -->
+  <rect width="1200" height="420" rx="20" fill="#f4f7f7"/>
+  <g id="project-title" font-family="Segoe UI, Arial, sans-serif">
+    <text x="56" y="62" font-size="18" font-weight="700" letter-spacing="2" fill="#075a62">SURFACE-MOUNT TECHNOLOGY</text>
+    <text x="52" y="146" font-size="76" font-weight="750" letter-spacing="-2" fill="#102e36">SMT</text>
+    <text x="54" y="207" font-size="48" font-weight="700" letter-spacing="-1.5" fill="#102e36">Order Management</text>
+    <text x="56" y="262" font-size="24" fill="#075a62">Plan Boards. Reserve parts.</text>
+    <text x="56" y="295" font-size="24" fill="#075a62">Hand off to production.</text>
+    <path d="M56 337H522" stroke="#c5d5d7" stroke-width="2"/>
+    <text x="56" y="375" font-size="19" fill="#597078">ASP.NET Core 8 / Azure Table Storage</text>
+  </g>
+  <g id="material-demand-example" transform="translate(580 32)" font-family="Segoe UI, Arial, sans-serif">
+    <rect width="588" height="356" rx="16" fill="#102e36"/>
+    <text x="30" y="39" font-size="17" font-weight="600" letter-spacing="1.4" fill="#a9d9dc">RECIPE → ORDER → MATERIAL DEMAND</text>
+    <text x="30" y="67" font-size="16" fill="#d6e7e7">Illustrative quantities</text>
+    <!-- Recipe line: component quantity and selected Board revision. -->
+    <g id="recipe-specimen" transform="translate(30 94)">
+      <rect width="64" height="64" rx="8" fill="#075a62" stroke="#12aab3" stroke-width="2"/>
+      <path d="M8 17H0M8 32H0M8 47H0M64 17H72M64 32H72M64 47H72" stroke="#a9d9dc" stroke-width="3"/>
+      <rect x="16" y="13" width="32" height="38" rx="3" fill="#102e36"/>
+      <text x="88" y="24" font-size="25" font-weight="600" fill="#ffffff">4 parts / Board</text>
+      <text x="88" y="53" font-size="18" fill="#d6e7e7">Selected recipe revision</text>
+    </g>
+    <path d="M30 187H558" stroke="#406169" stroke-width="1.5"/>
+    <g id="demand-calculation" transform="translate(30 223)">
+      <text font-size="32" font-weight="650" fill="#ffffff">4 × 25 Boards</text>
+      <text x="245" font-size="32" fill="#12aab3">=</text>
+      <text x="290" font-size="32" font-weight="650" fill="#ffffff">100 parts</text>
+      <text y="28" font-size="18" fill="#d6e7e7">Recipe × build quantity</text>
+      <text x="290" y="28" font-size="18" fill="#d6e7e7">Reserved for the Order</text>
+    </g>
+    <g id="stock-balance" transform="translate(30 282)">
+      <rect width="528" height="48" rx="8" fill="#075a62"/>
+      <text x="18" y="31" font-size="21" font-weight="600" fill="#ffffff">500 physical − 100 reserved = 400 available</text>
+    </g>
+  </g>
+</svg>

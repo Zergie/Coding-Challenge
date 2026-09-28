@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="132" viewBox="0 0 1200 132" role="img" aria-labelledby="title desc">
+  <title id="title">Entra registration</title>
+  <desc id="desc">Section 02: Entra registration, in the SMT Order Management teal visual system.</desc>
+  <rect width="1200" height="132" rx="16" fill="#f4f7f7"/>
+  <g id="section-icon" transform="translate(42 20)" fill="none" stroke="#075a62" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M50 8L82 20V46Q82 68 50 84Q18 68 18 46V20Z"/><circle cx="50" cy="38" r="10"/><path d="M34 64Q34 50 50 50Q66 50 66 64"/></g>
+  <text x="170" y="83" font-family="Segoe UI, Arial, sans-serif" font-size="42" font-weight="650" letter-spacing="-0.6" fill="#102e36">Entra registration</text>
+  <path d="M1080 40V92" stroke="#c5d5d7" stroke-width="2"/>
+  <text x="1130" y="81" text-anchor="middle" font-family="Consolas, monospace" font-size="27" fill="#075a62">02</text>
+</svg>
